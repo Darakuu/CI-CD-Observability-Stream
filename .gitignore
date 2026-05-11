@@ -15,6 +15,7 @@ dist/
 
 # dotenv environment variable files
 .env
+.log
 
 # Virtual environments
 .venv
@@ -35,8 +36,10 @@ htmlcov/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-# .python-version
+# Runtime data
+jenkins_home/
+otel-output/
+logstash-data/
 
 ### Ruby
 # Build artifacts
