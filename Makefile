@@ -1,3 +1,4 @@
+# PHONY: ensure that these are commands, not files.
 .PHONY: up down restart logs topics consume clean
 
 # Convenience targets for running and inspecting the local demo stack.
