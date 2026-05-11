@@ -73,9 +73,11 @@ admin / admin
 1. Open Jenkins on http://localhost:8080.
 2. Login with `admin / admin`.
 3. Open the job: `demo-ci-observability`.
-4. Execute `Build Now` a few times.
-5. Open Kafka UI on http://localhost:8085.
-6. Check the topic `cicd.otel.raw`.
+4. Execute `Build Now` a few times. Some builds will fail, some will succeed.
+5. Then, run the `consume_raw_topics` scripts (.sh for Linux, .ps1 for Windows Powershell).
+    5b. Ensuring you have correct permissions...
+6. Or simply open Kafka UI on http://localhost:8085.
+7. And check the topic `cicd.otel.raw`.
 
 Or, if you prefer, via CLI:
 
