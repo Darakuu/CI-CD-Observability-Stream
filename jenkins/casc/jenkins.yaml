@@ -1,0 +1,28 @@
+jenkins:
+  systemMessage: "CI/CD Observability Demo - Jenkins configured as code"
+  numExecutors: 2
+  mode: NORMAL
+  scmCheckoutRetryCount: 2
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+  openTelemetry:
+    # Jenkins sends pipeline telemetry directly to the collector service.
+    authentication: "noAuthentication"
+    endpoint: "otel-collector:4317"
+    exportOtelConfigurationAsEnvironmentVariables: true
+    ignoredSteps: "dir,echo,isUnix,pwd,properties"
+
+jobs:
+  # Job DSL keeps the demo pipeline versioned with the rest of the stack.
+  - file: /var/jenkins_home/job-dsl/seed.groovy

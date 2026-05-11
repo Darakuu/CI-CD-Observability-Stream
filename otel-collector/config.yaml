@@ -1,0 +1,48 @@
+receivers:
+  # Jenkins exports telemetry to the collector through the standard OTLP endpoints.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch keeps the demo realistic without adding custom processing rules.
+  batch:
+
+exporters:
+  # JSON Lines files make it easy for Logstash to tail each signal type.
+  file/traces:
+    path: /otel-output/traces.jsonl
+    append: true
+    format: json
+    create_directory: true
+  file/metrics:
+    path: /otel-output/metrics.jsonl
+    append: true
+    format: json
+    create_directory: true
+  file/logs:
+    path: /otel-output/logs.jsonl
+    append: true
+    format: json
+    create_directory: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    # Keep traces, metrics and logs separated until Logstash normalizes them.
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/traces, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/metrics, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/logs, debug]
