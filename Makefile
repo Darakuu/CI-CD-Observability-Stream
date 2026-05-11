@@ -1,3 +1,6 @@
+# NOTE: These commands are for linux based systems only, with `make` installed.
+# if on Windows, execute them through the included 'bash' environment in powershell.
+
 # PHONY: ensure that these are commands, not files.
 .PHONY: up down restart logs topics consume clean
 
