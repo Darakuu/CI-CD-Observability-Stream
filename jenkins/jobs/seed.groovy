@@ -13,6 +13,13 @@ pipelineJob('demo-ci-observability') {
 pipeline {
   agent any
 
+  environment {
+    SERVICE_NAME = 'demo-service'
+    SERVICE_MODULE = 'demo-service-api'
+    TARGET_ENVIRONMENT = 'staging'
+    SOURCE_BRANCH = 'main'
+  }
+
   options {
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '30'))
@@ -26,9 +33,11 @@ pipeline {
         sh(
           label: 'Simulate source checkout',
           script: [
-            'echo "event=checkout repository=demo-service branch=main"',
+            'echo "event=stage_start stage=checkout service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER branch=$SOURCE_BRANCH"',
+            'echo "event=checkout repository=$SERVICE_NAME branch=$SOURCE_BRANCH"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=checkout forced_success=true reason=tenth_build"',
+            '  echo "event=checkout stage=checkout status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER repository=$SERVICE_NAME branch=$SOURCE_BRANCH commit_sha=demo-$BUILD_NUMBER"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -36,10 +45,11 @@ pipeline {
             'echo "event=simulation stage=checkout random_scenario=$scenario"',
             'case $scenario in',
             '  1)',
-            '    echo "event=checkout status=failed reason=scm_timeout detail=git_provider_response_time_exceeded_30s"',
+            '    echo "event=checkout stage=checkout status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=scm_timeout detail=git_provider_response_time_exceeded_30s"',
             '    exit 11',
             '    ;;',
             'esac',
+            'echo "event=checkout stage=checkout status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER repository=$SERVICE_NAME branch=$SOURCE_BRANCH commit_sha=demo-$BUILD_NUMBER"',
             'sleep 1'
           ].join('\\n')
         )
@@ -53,9 +63,11 @@ pipeline {
         sh(
           label: 'Check build agent health',
           script: [
+            'echo "event=stage_start stage=preflight service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER agent=$NODE_NAME"',
             'echo "event=preflight workspace=$WORKSPACE executor=$EXECUTOR_NUMBER"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=preflight forced_success=true reason=tenth_build"',
+            '  echo "event=preflight stage=preflight status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER disk_free_pct=42 cpu_temp_c=58"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -63,14 +75,17 @@ pipeline {
             'echo "event=simulation stage=preflight random_scenario=$scenario"',
             'case $scenario in',
             '  2)',
-            '    echo "event=preflight status=failed reason=disk_full detail=workspace_volume_available_space_below_1_percent"',
+            '    echo "event=preflight stage=preflight status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=disk_full detail=workspace_volume_available_space_below_1_percent"',
             '    exit 21',
             '    ;;',
             '  4)',
-            '    echo "event=preflight status=failed reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit"',
+            '    echo "event=preflight stage=preflight status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit"',
             '    exit 22',
             '    ;;',
             'esac',
+            'disk_free_pct=$((35 + scenario))',
+            'cpu_temp_c=$((55 + scenario))',
+            'echo "event=preflight stage=preflight status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER disk_free_pct=$disk_free_pct cpu_temp_c=$cpu_temp_c"',
             'sleep 1'
           ].join('\\n')
         )
@@ -84,9 +99,11 @@ pipeline {
         sh(
           label: 'Compile demo service',
           script: [
-            'echo "event=build tool=maven module=demo-service"',
+            'echo "event=stage_start stage=build service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER module=$SERVICE_MODULE"',
+            'echo "event=build tool=maven module=$SERVICE_MODULE"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=build forced_success=true reason=tenth_build"',
+            '  echo "event=build stage=build status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER module=$SERVICE_MODULE compile_time_ms=4200 dependency_cache=hit"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -94,10 +111,12 @@ pipeline {
             'echo "event=simulation stage=build random_scenario=$scenario"',
             'case $scenario in',
             '  5)',
-            '    echo "event=build status=failed reason=dependency_resolution detail=artifact_repository_returned_503"',
+            '    echo "event=build stage=build status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER module=$SERVICE_MODULE reason=dependency_resolution detail=artifact_repository_returned_503"',
             '    exit 31',
             '    ;;',
             'esac',
+            'compile_time_ms=$((3800 + scenario * 250))',
+            'echo "event=build stage=build status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER module=$SERVICE_MODULE compile_time_ms=$compile_time_ms dependency_cache=hit"',
             'sleep 1'
           ].join('\\n')
         )
@@ -111,10 +130,11 @@ pipeline {
         sh(
           label: 'Run unit tests',
           script: [
+            'echo "event=stage_start stage=test service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER suite=unit"',
             'echo "event=test suite=unit total=42"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=test forced_success=true reason=tenth_build"',
-            '  echo "event=test status=passed failing_tests=0"',
+            '  echo "event=test stage=test status=passed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER total=42 passed_tests=42 failing_tests=0 duration_ms=5100"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -122,11 +142,12 @@ pipeline {
             'echo "event=simulation stage=test random_scenario=$scenario"',
             'case $scenario in',
             '  7)',
-            '    echo "event=test status=failed reason=flaky_test failing_tests=1 error_code=UT-001"',
+            '    echo "event=test stage=test status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=flaky_test failing_tests=1 error_code=UT-001"',
             '    exit 41',
             '    ;;',
             'esac',
-            'echo "event=test status=passed failing_tests=0"',
+            'duration_ms=$((4800 + scenario * 180))',
+            'echo "event=test stage=test status=passed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER total=42 passed_tests=42 failing_tests=0 duration_ms=$duration_ms"',
             'sleep 1'
           ].join('\\n')
         )
@@ -140,9 +161,11 @@ pipeline {
         sh(
           label: 'Package artifact',
           script: [
-            'echo "event=package artifact=demo-service.jar"',
+            'echo "event=stage_start stage=package service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER"',
+            'echo "event=package artifact=$SERVICE_NAME.jar"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=package forced_success=true reason=tenth_build"',
+            '  echo "event=package stage=package status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER artifact=$SERVICE_NAME.jar artifact_size_mb=18 checksum=sha256:demo-$BUILD_NUMBER"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -150,10 +173,12 @@ pipeline {
             'echo "event=simulation stage=package random_scenario=$scenario"',
             'case $scenario in',
             '  8)',
-            '    echo "event=package status=failed reason=artifact_checksum_mismatch detail=jar_digest_changed_after_build"',
+            '    echo "event=package stage=package status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=artifact_checksum_mismatch detail=jar_digest_changed_after_build"',
             '    exit 51',
             '    ;;',
             'esac',
+            'artifact_size_mb=$((16 + scenario))',
+            'echo "event=package stage=package status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER artifact=$SERVICE_NAME.jar artifact_size_mb=$artifact_size_mb checksum=sha256:demo-$BUILD_NUMBER"',
             'sleep 1'
           ].join('\\n')
         )
@@ -167,9 +192,11 @@ pipeline {
         sh(
           label: 'Deploy to staging',
           script: [
-            'echo "event=deploy environment=staging strategy=rolling"',
+            'echo "event=stage_start stage=deploy service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER environment=$TARGET_ENVIRONMENT"',
+            'echo "event=deploy environment=$TARGET_ENVIRONMENT strategy=rolling"',
             'if [ $((BUILD_NUMBER % 10)) -eq 0 ] && [ "$BUILD_NUMBER" -ne 0 ]; then',
             '  echo "event=simulation stage=deploy forced_success=true reason=tenth_build"',
+            '  echo "event=deploy stage=deploy status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER environment=$TARGET_ENVIRONMENT replicas_ready=3 replicas_expected=3 rollout_seconds=35"',
             '  sleep 1',
             '  exit 0',
             'fi',
@@ -177,10 +204,12 @@ pipeline {
             'echo "event=simulation stage=deploy random_scenario=$scenario"',
             'case $scenario in',
             '  10)',
-            '    echo "event=deploy status=failed reason=rollout_timeout detail=staging_pods_not_ready_after_120s"',
+            '    echo "event=deploy stage=deploy status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER environment=$TARGET_ENVIRONMENT reason=rollout_timeout detail=staging_pods_not_ready_after_120s"',
             '    exit 61',
             '    ;;',
             'esac',
+            'rollout_seconds=$((30 + scenario * 2))',
+            'echo "event=deploy stage=deploy status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER environment=$TARGET_ENVIRONMENT replicas_ready=3 replicas_expected=3 rollout_seconds=$rollout_seconds"',
             'sleep 1'
           ].join('\\n')
         )
