@@ -114,11 +114,19 @@ def normalize_events(kafka_events):
         ("error_code", r"error_code=([A-Za-z0-9_-]+)"),
         ("service_name", r"service=([A-Za-z0-9_.-]+)"),
         ("job_name", r'job_name=([^"\s]+)'),
+        ("job_name_from_log_path", r"/jobs/([^/]+)/builds/[0-9]+/log"),
         ("source_branch", r"branch=([A-Za-z0-9_./-]+)"),
         ("service_module", r"module=([A-Za-z0-9_.-]+)"),
         ("target_environment", r"environment=([A-Za-z0-9_.-]+)"),
         ("forced_success", r"forced_success=(true|false)"),
         ("severity_text", r'"severityText":"([A-Z]+)"'),
+        ("trace_id", r'"traceId":"([A-Fa-f0-9]+)"'),
+        ("span_id", r'"spanId":"([A-Fa-f0-9]+)"'),
+        ("span_name", r'"name":"([^"]+)","startTimeUnixNano"'),
+        ("http_method", r'"value":\{"stringValue":"([A-Z]+)"\},"key":"http.request.method"'),
+        ("http_route", r'"value":\{"stringValue":"([^"]+)"\},"key":"http.route"'),
+        ("exception_type", r'"value":\{"stringValue":"([^"]+)"\},"key":"exception.type"'),
+        ("exception_message", r'"value":\{"stringValue":"([^"]+)"\},"key":"exception.message"'),
     ]
     number_fields = [
         ("build_number", r"build_number=([0-9]+)"),
@@ -131,6 +139,8 @@ def normalize_events(kafka_events):
         ("test_duration_ms", r"duration_ms=([0-9]+)"),
         ("artifact_size_mb", r"artifact_size_mb=([0-9]+)"),
         ("rollout_seconds", r"rollout_seconds=([0-9]+)"),
+        ("http_status_code", r'"value":\{"intValue":"?([0-9]+)"?\},"key":"http.response.status_code"'),
+        ("build_number_from_log_path", r"/builds/([0-9]+)/log"),
     ]
 
     enriched_events = normalized_events
@@ -155,6 +165,8 @@ def normalize_events(kafka_events):
                 col("ci_failed_event"),
                 col("ci_event_with_status"),
                 col("ci_first_event"),
+                when(col("exception_type").isNotNull(), lit("jenkins_exception")),
+                when(col("http_status_code").isNotNull(), lit("jenkins_http")),
             ),
         )
         .withColumn(
@@ -165,6 +177,8 @@ def normalize_events(kafka_events):
                 col("ci_event_with_status"),
             ),
         )
+        .withColumn("job_name", coalesce(col("job_name"), col("job_name_from_log_path")))
+        .withColumn("build_number", coalesce(col("build_number"), col("build_number_from_log_path")))
         .withColumn("forced_success", col("forced_success").cast("boolean"))
     )
 
@@ -172,6 +186,8 @@ def normalize_events(kafka_events):
         enriched_events.withColumn(
             "is_failure",
             when(col("failure_reason").isNotNull(), lit(True))
+            .when(col("exception_type").isNotNull(), lit(True))
+            .when(col("http_status_code") >= 500, lit(True))
             .when(col("pipeline_status") == "failure", lit(True))
             .when(col("ci_status") == "failed", lit(True))
             .otherwise(lit(False)),
@@ -184,6 +200,8 @@ def normalize_events(kafka_events):
             .when(col("failure_reason") == "flaky_test", "test")
             .when(col("failure_reason") == "artifact_checksum_mismatch", "package")
             .when(col("failure_reason") == "rollout_timeout", "deployment")
+            .when(col("exception_type").isNotNull(), "jenkins_runtime")
+            .when(col("http_status_code") >= 500, "jenkins_http")
             .when(col("failure_reason").isNotNull(), "other")
             .otherwise(lit(None)),
         )
@@ -191,6 +209,7 @@ def normalize_events(kafka_events):
             "risk_hint", # how severe was the risk?
             when(col("is_failure"), lit(1.0))
             .when(col("severity_text") == "WARNING", lit(0.6))
+            .when(col("http_status_code") >= 400, lit(0.6))
             .when(col("ci_stage").isin("deploy", "package"), lit(0.3))
             .when(col("ci_stage").isNotNull(), lit(0.15))
             .otherwise(lit(0.05)),
@@ -241,8 +260,17 @@ def normalize_events(kafka_events):
                 "artifact_size_mb",
                 "rollout_seconds",
                 "severity_text",
+                "trace_id",
+                "span_id",
+                "span_name",
+                "http_method",
+                "http_route",
+                "http_status_code",
+                "exception_type",
+                "exception_message",
                 "raw_event",
-            )
+            ),
+            {"ignoreNullFields": "false"},
         ).alias("value"),
     )
 
