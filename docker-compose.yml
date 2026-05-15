@@ -90,6 +90,34 @@ services:
       # Start and execute with 512 MBs of RAM.
       - LS_JAVA_OPTS=-Xms512m -Xmx512m
 
+  spark-processor:
+    build:
+      context: ./spark
+    container_name: tap-spark-processor
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      logstash:
+        condition: service_started
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - RAW_TOPIC=cicd.otel.raw
+      - PROCESSED_TOPIC=cicd.otel.processed
+      - CHECKPOINT_LOCATION=/tmp/spark-checkpoints/cicd-otel-processed
+    volumes:
+      # Spark needs POSIX filesystem semantics for checkpoint metadata.
+      # A Docker volume avoids chmod failures on Windows bind mounts.
+      - spark-checkpoints:/tmp/spark-checkpoints:rw
+    command:
+      - /opt/spark/bin/spark-submit
+      - --packages
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - /opt/tap/spark/process_stream.py
+
   jenkins:
     build:
       context: ./jenkins
@@ -110,3 +138,6 @@ services:
       - ./jenkins/casc:/var/jenkins_home/casc_configs:ro
       - ./jenkins/jobs:/var/jenkins_home/job-dsl:ro
       - ./jenkins_home:/var/jenkins_home
+
+volumes:
+  spark-checkpoints:
