@@ -1,4 +1,4 @@
-# Data Ingestion how to:
+# Data Ingestion (and Streaming) how to:
 
 First part of our pipeline (in detail):
 

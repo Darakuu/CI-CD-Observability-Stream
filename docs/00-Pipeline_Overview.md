@@ -10,12 +10,16 @@ flowchart TD
     OTel["OpenTelemetry Collector"]
     Files[("JSONL files\ntraces, metrics, logs")]
     Logstash["Logstash ingestion"]
-    Kafka[("Kafka topic\ncicd.otel.raw")]
+    RawKafka[("Kafka topic\ncicd.otel.raw")]
+    Spark["Spark Structured Streaming"]
+    ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
     KafkaUI["Kafka UI / consumers"]
 
     Jenkins -->|"OTLP telemetry"| OTel
     OTel -->|"writes"| Files
     Files -->|"tails"| Logstash
-    Logstash -->|"enriched JSON events"| Kafka
-    Kafka -->|"inspect / consume"| KafkaUI
+    Logstash -->|"enriched JSON events"| RawKafka
+    RawKafka -->|"raw telemetry stream"| Spark
+    Spark -->|"processed events"| ProcessedKafka
+    ProcessedKafka -->|"inspect / consume"| KafkaUI
 ```
