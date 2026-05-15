@@ -1,6 +1,6 @@
 # Processing with Spark Structured Streaming
 
-This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, normalizes a small set of fields, and writes feed-forward events to `cicd.otel.processed`.
+This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, extracts useful Jenkins pipeline fields, and writes enriched events to `cicd.otel.processed`.
 
 ```mermaid
 flowchart TD
@@ -44,12 +44,41 @@ The value is a JSON object like this:
   "source_offset": 42,
   "source_kafka_timestamp": "2026-05-11T00:00:00.000Z",
   "raw_event_sha256": "sha256-of-the-original-event",
+  "ci_event": "preflight",
+  "ci_stage": "preflight",
+  "ci_status": "failed",
+  "pipeline_status": "failure",
+  "is_failure": true,
+  "failure_category": "infrastructure",
+  "failure_reason": "disk_full",
+  "failure_detail": "workspace_volume_available_space_below_1_percent",
+  "error_code": null,
+  "risk_hint": 1.0,
+  "service_name": "demo-service",
+  "service_module": "demo-service-api",
+  "job_name": "demo-ci-observability",
+  "build_number": 42,
+  "source_branch": "main",
+  "target_environment": "staging",
+  "random_scenario": 2,
+  "forced_success": false,
+  "disk_free_pct": null,
+  "cpu_temp_c": null,
+  "compile_time_ms": null,
+  "test_total": null,
+  "failing_tests": null,
+  "test_duration_ms": null,
+  "artifact_size_mb": null,
+  "rollout_seconds": null,
+  "severity_text": "INFO",
   "raw_event": "{...original Logstash event...}"
 }
 ```
 
 The original event is still kept in `raw_event`.
-This is useful because the next stages can still access the full OpenTelemetry payload, while the extra fields give us a cleaner base for MLlib and Elasticsearch later.
+This is useful because the next stages can still access the full OpenTelemetry payload, while the extracted fields give MLlib, Elasticsearch and Kibana a cleaner base to work with.
+
+The `risk_hint` field is not the final ML result. It is only a simple Spark-side signal: failed events get a high value, warnings get a medium value, and normal CI stage events get a low value. The real prediction/anomaly logic belongs to the later MLlib stage.
 
 ## Running it
 
