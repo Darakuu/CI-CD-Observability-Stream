@@ -6,7 +6,9 @@ from pyspark.sql.functions import col
 from pyspark.sql.functions import current_timestamp
 from pyspark.sql.functions import get_json_object
 from pyspark.sql.functions import json_tuple
+from pyspark.sql.functions import length
 from pyspark.sql.functions import lit
+from pyspark.sql.functions import regexp_extract
 from pyspark.sql.functions import sha2
 from pyspark.sql.functions import struct
 from pyspark.sql.functions import to_json
@@ -48,6 +50,9 @@ def read_raw_events(spark: SparkSession):
 
 
 def normalize_events(kafka_events):
+    def non_empty(column_name):
+        return when(length(col(column_name)) > 0, col(column_name))
+
     # Spark's Kafka source exposes both the Kafka envelope and the message body.
     # We keep topic, partition, offset, and timestamp so downstream stages can
     # trace a processed event back to its exact raw Kafka position.
@@ -93,10 +98,109 @@ def normalize_events(kafka_events):
         .withColumn("raw_event_sha256", sha2(col("raw_event"), 256))
     )
 
+    # Jenkins writes compact key=value log lines during the demo pipeline.
+    # These fields pull the useful CI/CD facts out of the OpenTelemetry payload
+    # so MLlib, Elasticsearch and Kibana do not need to parse the raw JSON blob.
+    # Had to write Regex, sadly. :(
+    text_fields = [
+        ("ci_event_with_status", r"event=([A-Za-z0-9_-]+)[^\"]*status=(?:success|passed|failed)"),
+        ("ci_failed_event", r"event=([A-Za-z0-9_-]+)[^\"]*status=failed"),
+        ("ci_first_event", r"event=([A-Za-z0-9_-]+)"),
+        ("ci_stage_from_log", r"stage=([A-Za-z0-9_-]+)"),
+        ("ci_status", r"status=([A-Za-z0-9_-]+)"),
+        ("pipeline_status", r"pipeline_status=([A-Za-z0-9_-]+)"),
+        ("failure_reason", r"status=failed[^\"]*reason=([A-Za-z0-9_.-]+)"),
+        ("failure_detail", r'detail=([^"\s]+)'),
+        ("error_code", r"error_code=([A-Za-z0-9_-]+)"),
+        ("service_name", r"service=([A-Za-z0-9_.-]+)"),
+        ("job_name", r'job_name=([^"\s]+)'),
+        ("source_branch", r"branch=([A-Za-z0-9_./-]+)"),
+        ("service_module", r"module=([A-Za-z0-9_.-]+)"),
+        ("target_environment", r"environment=([A-Za-z0-9_.-]+)"),
+        ("forced_success", r"forced_success=(true|false)"),
+        ("severity_text", r'"severityText":"([A-Z]+)"'),
+    ]
+    number_fields = [
+        ("build_number", r"build_number=([0-9]+)"),
+        ("random_scenario", r"random_scenario=([0-9]+)"),
+        ("disk_free_pct", r"disk_free_pct=([0-9]+)"),
+        ("cpu_temp_c", r"cpu_temp_c=([0-9]+)"),
+        ("compile_time_ms", r"compile_time_ms=([0-9]+)"),
+        ("test_total", r"total=([0-9]+)"),
+        ("failing_tests", r"failing_tests=([0-9]+)"),
+        ("test_duration_ms", r"duration_ms=([0-9]+)"),
+        ("artifact_size_mb", r"artifact_size_mb=([0-9]+)"),
+        ("rollout_seconds", r"rollout_seconds=([0-9]+)"),
+    ]
+
+    enriched_events = normalized_events
+    for field_name, pattern in text_fields:
+        enriched_events = enriched_events.withColumn(
+            field_name,
+            regexp_extract(col("raw_event"), pattern, 1),
+        )
+    for field_name, pattern in number_fields:
+        enriched_events = enriched_events.withColumn(
+            field_name,
+            regexp_extract(col("raw_event"), pattern, 1).cast("int"),
+        )
+
+    for field_name, _ in text_fields:
+        enriched_events = enriched_events.withColumn(field_name, non_empty(field_name))
+
+    enriched_events = (
+        enriched_events.withColumn(
+            "ci_event",
+            coalesce(
+                col("ci_failed_event"),
+                col("ci_event_with_status"),
+                col("ci_first_event"),
+            ),
+        )
+        .withColumn(
+            "ci_stage",
+            coalesce(
+                col("ci_stage_from_log"),
+                col("ci_failed_event"),
+                col("ci_event_with_status"),
+            ),
+        )
+        .withColumn("forced_success", col("forced_success").cast("boolean"))
+    )
+
+    enriched_events = (
+        enriched_events.withColumn(
+            "is_failure",
+            when(col("failure_reason").isNotNull(), lit(True))
+            .when(col("pipeline_status") == "failure", lit(True))
+            .when(col("ci_status") == "failed", lit(True))
+            .otherwise(lit(False)),
+        )
+        .withColumn( # what category of failure was it?
+            "failure_category",
+            when(col("failure_reason").isin("disk_full", "thermal_throttling"), "infrastructure")
+            .when(col("failure_reason") == "scm_timeout", "source_control")
+            .when(col("failure_reason") == "dependency_resolution", "build")
+            .when(col("failure_reason") == "flaky_test", "test")
+            .when(col("failure_reason") == "artifact_checksum_mismatch", "package")
+            .when(col("failure_reason") == "rollout_timeout", "deployment")
+            .when(col("failure_reason").isNotNull(), "other")
+            .otherwise(lit(None)),
+        )
+        .withColumn(
+            "risk_hint", # how severe was the risk?
+            when(col("is_failure"), lit(1.0))
+            .when(col("severity_text") == "WARNING", lit(0.6))
+            .when(col("ci_stage").isin("deploy", "package"), lit(0.3))
+            .when(col("ci_stage").isNotNull(), lit(0.15))
+            .otherwise(lit(0.05)),
+        )
+    )
+
     # Kafka sinks expect the outgoing DataFrame to contain key/value columns.
     # The value is a compact JSON document, while the key is stable for the
     # original raw event and can later help with grouping or deduplication.
-    return normalized_events.select(
+    return enriched_events.select(
         col("raw_event_sha256").alias("key"),
         to_json(
             struct(
@@ -110,6 +214,33 @@ def normalize_events(kafka_events):
                 "source_offset",
                 "source_kafka_timestamp",
                 "raw_event_sha256",
+                "ci_event",
+                "ci_stage",
+                "ci_status",
+                "pipeline_status",
+                "is_failure",
+                "failure_category",
+                "failure_reason",
+                "failure_detail",
+                "error_code",
+                "risk_hint",
+                "service_name",
+                "service_module",
+                "job_name",
+                "build_number",
+                "source_branch",
+                "target_environment",
+                "random_scenario",
+                "forced_success",
+                "disk_free_pct",
+                "cpu_temp_c",
+                "compile_time_ms",
+                "test_total",
+                "failing_tests",
+                "test_duration_ms",
+                "artifact_size_mb",
+                "rollout_seconds",
+                "severity_text",
                 "raw_event",
             )
         ).alias("value"),
