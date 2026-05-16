@@ -30,50 +30,52 @@ This keeps the startup order predictable and avoids Spark subscribing to a topic
 ## What Spark writes
 
 Each message written to Kafka uses `raw_event_sha256` as the key.
-The value is a JSON object like this:
+For a successful build-stage event, the value is a JSON object like this:
 
 ```json
 {
   "processing_component": "spark-structured-streaming",
   "processed_at": "2026-05-11T00:00:00.000Z",
-  "otel_signal": "traces",
-  "event_dataset": "jenkins.otel.raw",
+  "otel_signal": "logs",
+  "event_dataset": "jenkins.build.console",
   "ingestion_component": "logstash",
   "source_topic": "cicd.otel.raw",
   "source_partition": 0,
   "source_offset": 42,
   "source_kafka_timestamp": "2026-05-11T00:00:00.000Z",
   "raw_event_sha256": "sha256-of-the-original-event",
-  "ci_event": "preflight",
-  "ci_stage": "preflight",
-  "ci_status": "failed",
-  "pipeline_status": "failure",
-  "is_failure": true,
-  "failure_category": "infrastructure",
-  "failure_reason": "disk_full",
-  "failure_detail": "workspace_volume_available_space_below_1_percent",
-  "error_code": null,
-  "risk_hint": 1.0,
+  "ci_event": "build",
+  "ci_stage": "build",
+  "ci_status": "success",
+  "is_failure": false,
+  "risk_hint": 0.15,
   "service_name": "demo-service",
   "service_module": "demo-service-api",
+  "dependency_cache": "hit",
   "job_name": "demo-ci-observability",
   "build_number": 42,
-  "source_branch": "main",
-  "target_environment": "staging",
-  "random_scenario": 2,
-  "forced_success": false,
-  "disk_free_pct": null,
-  "cpu_temp_c": null,
-  "compile_time_ms": null,
-  "test_total": null,
-  "failing_tests": null,
-  "test_duration_ms": null,
-  "artifact_size_mb": null,
-  "rollout_seconds": null,
-  "severity_text": "INFO",
+  "compile_time_ms": 4200,
   "raw_event": "{...original Logstash event...}"
 }
 ```
+
+Fields whose value is null are omitted from the JSON, to improve a message's readability. 
+
+**Downstream Spark stages should read this topic with an explicit schema.**
+
+The simulated Jenkins pipeline reports extra fields on the events where they
+make sense. Spark extracts and forwards these optional features when present:
+
+| Jenkins event | Optional processed fields |
+| --- | --- |
+| `checkout` | `source_branch` |
+| `preflight` | `disk_free_pct`, `cpu_temp_c` |
+| `build` | `service_module`, `build_tool`, `dependency_cache`, `compile_time_ms` |
+| `test` | `test_suite`, `test_total`, `passed_tests`, `failing_tests`, `test_duration_ms`, `error_code` |
+| `package` | `artifact_name`, `artifact_size_mb`, `artifact_checksum` |
+| `deploy` | `target_environment`, `deployment_strategy`, `replicas_ready`, `replicas_expected`, `rollout_seconds` |
+| `simulation` | `random_scenario`, `forced_success` |
+| `pipeline_result`, `build_summary`, `build_report` | `pipeline_status`, `build_url`, OpenTelemetry span identifiers when available |
 
 The original event is still kept in `raw_event`.
 This is useful because the next stages can still access the full OpenTelemetry payload, while the extracted fields give MLlib, Elasticsearch and Kibana a cleaner base to work with.

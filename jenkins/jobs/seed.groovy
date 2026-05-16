@@ -219,13 +219,13 @@ pipeline {
 
   post {
     success {
-      echo 'pipeline_status=success'
+      echo "event=pipeline_result stage=pipeline status=success pipeline_status=success job_name=${env.JOB_NAME} build_number=${env.BUILD_NUMBER}"
     }
     failure {
-      echo 'pipeline_status=failure'
+      echo "event=pipeline_result stage=pipeline status=failed pipeline_status=failure job_name=${env.JOB_NAME} build_number=${env.BUILD_NUMBER}"
     }
     always {
-      echo "build_url=${env.BUILD_URL} job_name=${env.JOB_NAME} build_number=${env.BUILD_NUMBER}"
+      echo "event=build_summary stage=pipeline status=${currentBuild.currentResult == 'SUCCESS' ? 'success' : 'failed'} build_url=${env.BUILD_URL} job_name=${env.JOB_NAME} build_number=${env.BUILD_NUMBER}"
     }
   }
 }

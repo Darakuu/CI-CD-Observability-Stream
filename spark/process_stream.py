@@ -4,15 +4,24 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import coalesce
 from pyspark.sql.functions import col
 from pyspark.sql.functions import current_timestamp
+from pyspark.sql.functions import explode_outer
+from pyspark.sql.functions import expr
+from pyspark.sql.functions import from_json
 from pyspark.sql.functions import get_json_object
 from pyspark.sql.functions import json_tuple
 from pyspark.sql.functions import length
 from pyspark.sql.functions import lit
+from pyspark.sql.functions import lower
 from pyspark.sql.functions import regexp_extract
+from pyspark.sql.functions import regexp_replace
 from pyspark.sql.functions import sha2
 from pyspark.sql.functions import struct
 from pyspark.sql.functions import to_json
 from pyspark.sql.functions import when
+from pyspark.sql.types import ArrayType
+from pyspark.sql.types import StringType
+from pyspark.sql.types import StructField
+from pyspark.sql.types import StructType
 
 
 # These values are supplied by docker-compose in normal runs. Keeping defaults
@@ -23,6 +32,69 @@ PROCESSED_TOPIC = os.getenv("PROCESSED_TOPIC", "cicd.otel.processed")
 CHECKPOINT_LOCATION = os.getenv(
     "CHECKPOINT_LOCATION",
     "/tmp/spark-checkpoints/cicd-otel-processed",
+)
+
+ATTRIBUTE_VALUE_SCHEMA = StructType(
+    [
+        StructField("stringValue", StringType()),
+        StructField("intValue", StringType()),
+        StructField("boolValue", StringType()),
+        StructField("doubleValue", StringType()),
+    ]
+)
+ATTRIBUTE_SCHEMA = StructType(
+    [
+        StructField("key", StringType()),
+        StructField("value", ATTRIBUTE_VALUE_SCHEMA),
+    ]
+)
+SPAN_EVENT_SCHEMA = StructType(
+    [
+        StructField("name", StringType()),
+        StructField("attributes", ArrayType(ATTRIBUTE_SCHEMA)),
+    ]
+)
+SPAN_SCHEMA = StructType(
+    [
+        StructField("traceId", StringType()),
+        StructField("spanId", StringType()),
+        StructField("parentSpanId", StringType()),
+        StructField("name", StringType()),
+        StructField(
+            "status",
+            StructType(
+                [
+                    StructField("code", StringType()),
+                    StructField("message", StringType()),
+                ]
+            ),
+        ),
+        StructField("attributes", ArrayType(ATTRIBUTE_SCHEMA)),
+        StructField("events", ArrayType(SPAN_EVENT_SCHEMA)),
+    ]
+)
+OTEL_TRACE_SCHEMA = StructType(
+    [
+        StructField(
+            "resourceSpans",
+            ArrayType(
+                StructType(
+                    [
+                        StructField(
+                            "scopeSpans",
+                            ArrayType(
+                                StructType(
+                                    [
+                                        StructField("spans", ArrayType(SPAN_SCHEMA)),
+                                    ]
+                                )
+                            ),
+                        ),
+                    ]
+                )
+            ),
+        ),
+    ]
 )
 
 
@@ -46,6 +118,43 @@ def read_raw_events(spark: SparkSession):
         .option("startingOffsets", "earliest")
         .option("failOnDataLoss", "false")
         .load()
+    )
+
+
+def span_attr_string(attribute_name):
+    return expr(
+        "element_at("
+        f"transform(filter(span.attributes, x -> x.key = '{attribute_name}'), "
+        "x -> x.value.stringValue), "
+        "1)"
+    )
+
+
+def span_attr_int(attribute_name):
+    return expr(
+        "cast(element_at("
+        f"transform(filter(span.attributes, x -> x.key = '{attribute_name}'), "
+        "x -> coalesce(x.value.intValue, x.value.stringValue)), "
+        "1) as int)"
+    )
+
+
+def normalize_pipeline_status(status_column):
+    normalized = lower(status_column)
+    return (
+        when(normalized.isin("failure", "failed", "error"), lit("failure"))
+        .when(normalized.isin("success", "succeeded", "passed"), lit("success"))
+        .otherwise(normalized)
+    )
+
+
+def normalize_ci_status(status_column):
+    normalized = lower(status_column)
+    return (
+        when(normalized.isin("failure", "failed", "error"), lit("failed"))
+        .when(normalized.isin("success", "succeeded"), lit("success"))
+        .when(normalized == "passed", lit("passed"))
+        .otherwise(normalized)
     )
 
 
@@ -96,28 +205,74 @@ def normalize_events(kafka_events):
         .withColumn("processing_component", lit("spark-structured-streaming"))
         .withColumn("processed_at", current_timestamp())
         .withColumn("raw_event_sha256", sha2(col("raw_event"), 256))
+        .withColumn("message", get_json_object(col("raw_event"), "$.message"))
+        .withColumn("log_path", get_json_object(col("raw_event"), "$.path"))
     )
 
+    expanded_events = expand_otel_spans(normalized_events)
+    enriched_events = normalize_ci_events(expanded_events, non_empty)
+
+    return finalize_events(enriched_events)
+
+
+def expand_otel_spans(normalized_events):
+    return (
+        normalized_events.withColumn(
+            "otel_trace",
+            from_json(
+                col("raw_event"),
+                OTEL_TRACE_SCHEMA,
+                {"primitivesAsString": "true"},
+            ),
+        )
+        .withColumn("resource_span", explode_outer(col("otel_trace.resourceSpans")))
+        .withColumn("scope_span", explode_outer(col("resource_span.scopeSpans")))
+        .withColumn("span", explode_outer(col("scope_span.spans")))
+        .withColumn("otel_span_name", col("span.name"))
+        .withColumn("otel_trace_id", col("span.traceId"))
+        .withColumn("otel_span_id", col("span.spanId"))
+        .withColumn("otel_status_code", col("span.status.code").cast("int"))
+        .withColumn("otel_status_message", col("span.status.message"))
+        .withColumn("span_pipeline_status", normalize_pipeline_status(span_attr_string("ci.pipeline.run.result")))
+        .withColumn(
+            "span_job_name",
+            coalesce(span_attr_string("ci.pipeline.name"), span_attr_string("ci.pipeline.id")),
+        )
+        .withColumn("span_build_number", span_attr_int("ci.pipeline.run.number"))
+        .withColumn("span_exception_type", span_attr_string("exception.type"))
+        .withColumn("span_exception_message", span_attr_string("exception.message"))
+    )
+
+
+def normalize_ci_events(normalized_events, non_empty):
     # Jenkins writes compact key=value log lines during the demo pipeline.
     # These fields pull the useful CI/CD facts out of the OpenTelemetry payload
     # so MLlib, Elasticsearch and Kibana do not need to parse the raw JSON blob.
-    # Had to write Regex, sadly. :(
+    # The (many...) regexes now run only against the console message, not the whole Logstash JSON wrapper. 
+    # Running them over the full raw JSON can mix wrapper fields
+    # with the build line and make the processed fields disagree with Jenkins.
     text_fields = [
-        ("ci_event_with_status", r"event=([A-Za-z0-9_-]+)[^\"]*status=(?:success|passed|failed)"),
-        ("ci_failed_event", r"event=([A-Za-z0-9_-]+)[^\"]*status=failed"),
+        ("ci_event_with_status", r"event=([A-Za-z0-9_-]+)[^\"]*\sstatus=(?:success|passed|failed)"),
+        ("ci_failed_event", r"event=([A-Za-z0-9_-]+)[^\"]*\sstatus=failed"),
         ("ci_first_event", r"event=([A-Za-z0-9_-]+)"),
         ("ci_stage_from_log", r"stage=([A-Za-z0-9_-]+)"),
-        ("ci_status", r"status=([A-Za-z0-9_-]+)"),
+        ("ci_status", r"(?:^|\s)status=([A-Za-z0-9_-]+)"),
         ("pipeline_status", r"pipeline_status=([A-Za-z0-9_-]+)"),
-        ("failure_reason", r"status=failed[^\"]*reason=([A-Za-z0-9_.-]+)"),
+        ("failure_reason", r"\sstatus=failed[^\"]*reason=([A-Za-z0-9_.-]+)"),
         ("failure_detail", r'detail=([^"\s]+)'),
         ("error_code", r"error_code=([A-Za-z0-9_-]+)"),
         ("service_name", r"service=([A-Za-z0-9_.-]+)"),
         ("job_name", r'job_name=([^"\s]+)'),
-        ("job_name_from_log_path", r"/jobs/([^/]+)/builds/[0-9]+/log"),
+        ("build_url", r'build_url=([^"\s]+)'),
         ("source_branch", r"branch=([A-Za-z0-9_./-]+)"),
         ("service_module", r"module=([A-Za-z0-9_.-]+)"),
+        ("build_tool", r"tool=([A-Za-z0-9_.-]+)"),
+        ("dependency_cache", r"dependency_cache=([A-Za-z0-9_.-]+)"),
+        ("test_suite", r"suite=([A-Za-z0-9_.-]+)"),
+        ("artifact_name", r'artifact=([^"\s]+)'),
+        ("artifact_checksum", r'checksum=([^"\s]+)'),
         ("target_environment", r"environment=([A-Za-z0-9_.-]+)"),
+        ("deployment_strategy", r"strategy=([A-Za-z0-9_.-]+)"),
         ("forced_success", r"forced_success=(true|false)"),
         ("severity_text", r'"severityText":"([A-Z]+)"'),
         ("trace_id", r'"traceId":"([A-Fa-f0-9]+)"'),
@@ -135,28 +290,60 @@ def normalize_events(kafka_events):
         ("cpu_temp_c", r"cpu_temp_c=([0-9]+)"),
         ("compile_time_ms", r"compile_time_ms=([0-9]+)"),
         ("test_total", r"total=([0-9]+)"),
+        ("passed_tests", r"passed_tests=([0-9]+)"),
         ("failing_tests", r"failing_tests=([0-9]+)"),
         ("test_duration_ms", r"duration_ms=([0-9]+)"),
         ("artifact_size_mb", r"artifact_size_mb=([0-9]+)"),
+        ("replicas_ready", r"replicas_ready=([0-9]+)"),
+        ("replicas_expected", r"replicas_expected=([0-9]+)"),
         ("rollout_seconds", r"rollout_seconds=([0-9]+)"),
         ("http_status_code", r'"value":\{"intValue":"?([0-9]+)"?\},"key":"http.response.status_code"'),
-        ("build_number_from_log_path", r"/builds/([0-9]+)/log"),
     ]
 
-    enriched_events = normalized_events
+    enriched_events = (
+        normalized_events.withColumn(
+            "is_console_event",
+            col("event_dataset") == "jenkins.build.console",
+        )
+        .withColumn(
+            "is_otel_build_span",
+            col("span_build_number").isNotNull()
+            & (
+                col("otel_span_name").startswith("BUILD ")
+                | col("span_pipeline_status").isNotNull()
+            ),
+        )
+        .filter(col("is_console_event") | col("is_otel_build_span"))
+        .withColumn(
+            "ci_text",
+            when(col("is_console_event"), coalesce(col("message"), col("raw_event"))).otherwise(lit("")),
+        )
+        .withColumn(
+            "job_name_from_log_path",
+            regexp_extract(col("log_path"), r"/jobs/([^/]+)/builds/[0-9]+/log", 1),
+        )
+        .withColumn(
+            "build_number_from_log_path",
+            regexp_extract(col("log_path"), r"/builds/([0-9]+)/log", 1).cast("int"),
+        )
+    )
     for field_name, pattern in text_fields:
         enriched_events = enriched_events.withColumn(
             field_name,
-            regexp_extract(col("raw_event"), pattern, 1),
+            regexp_extract(col("ci_text"), pattern, 1),
         )
     for field_name, pattern in number_fields:
         enriched_events = enriched_events.withColumn(
             field_name,
-            regexp_extract(col("raw_event"), pattern, 1).cast("int"),
+            regexp_extract(col("ci_text"), pattern, 1).cast("int"),
         )
 
     for field_name, _ in text_fields:
         enriched_events = enriched_events.withColumn(field_name, non_empty(field_name))
+    enriched_events = enriched_events.withColumn(
+        "job_name_from_log_path",
+        non_empty("job_name_from_log_path"),
+    )
 
     enriched_events = (
         enriched_events.withColumn(
@@ -165,6 +352,9 @@ def normalize_events(kafka_events):
                 col("ci_failed_event"),
                 col("ci_event_with_status"),
                 col("ci_first_event"),
+                when(col("is_otel_build_span"), lit("build_report")),
+                when(col("pipeline_status").isNotNull(), lit("pipeline_result")),
+                when(col("build_url").isNotNull(), lit("build_summary")),
                 when(col("exception_type").isNotNull(), lit("jenkins_exception")),
                 when(col("http_status_code").isNotNull(), lit("jenkins_http")),
             ),
@@ -175,19 +365,62 @@ def normalize_events(kafka_events):
                 col("ci_stage_from_log"),
                 col("ci_failed_event"),
                 col("ci_event_with_status"),
+                when(
+                    col("ci_first_event").isin("checkout", "preflight", "build", "test", "package", "deploy"),
+                    col("ci_first_event"),
+                ),
+                when(col("is_otel_build_span"), lit("pipeline")),
+                when(col("pipeline_status").isNotNull(), lit("pipeline")),
+                when(col("build_url").isNotNull(), lit("pipeline")),
             ),
         )
-        .withColumn("job_name", coalesce(col("job_name"), col("job_name_from_log_path")))
-        .withColumn("build_number", coalesce(col("build_number"), col("build_number_from_log_path")))
+        .withColumn("job_name", coalesce(col("job_name"), col("job_name_from_log_path"), col("span_job_name")))
+        .withColumn("build_number", coalesce(col("build_number"), col("build_number_from_log_path"), col("span_build_number")))
         .withColumn("forced_success", col("forced_success").cast("boolean"))
+        .withColumn("pipeline_status", coalesce(normalize_pipeline_status(col("pipeline_status")), col("span_pipeline_status")))
+        .withColumn("trace_id", coalesce(col("trace_id"), col("otel_trace_id")))
+        .withColumn("span_id", coalesce(col("span_id"), col("otel_span_id")))
+        .withColumn("span_name", coalesce(col("span_name"), col("otel_span_name")))
+        .withColumn("exception_type", coalesce(col("exception_type"), col("span_exception_type")))
+        .withColumn("exception_message", coalesce(col("exception_message"), col("span_exception_message")))
+        .withColumn("ci_status", normalize_ci_status(col("ci_status")))
+        .withColumn(
+            "ci_status",
+            coalesce(
+                col("ci_status"),
+                when(col("pipeline_status") == "failure", lit("failed")).when(
+                    col("pipeline_status") == "success", lit("success")
+                ),
+            ),
+        )
+        .withColumn(
+            "failure_reason",
+            coalesce(
+                col("failure_reason"),
+                when(
+                    col("is_otel_build_span") & (col("pipeline_status") == "failure"),
+                    lower(
+                        regexp_replace(
+                            coalesce(col("exception_type"), lit("pipeline_failure")),
+                            r"[^A-Za-z0-9_.-]+",
+                            "_",
+                        )
+                    )
+                ),
+            ),
+        )
     )
+    return enriched_events
 
+
+def finalize_events(enriched_events):
     enriched_events = (
         enriched_events.withColumn(
             "is_failure",
             when(col("failure_reason").isNotNull(), lit(True))
             .when(col("exception_type").isNotNull(), lit(True))
             .when(col("http_status_code") >= 500, lit(True))
+            .when(col("otel_status_code") >= 2, lit(True))
             .when(col("pipeline_status") == "failure", lit(True))
             .when(col("ci_status") == "failed", lit(True))
             .otherwise(lit(False)),
@@ -200,6 +433,8 @@ def normalize_events(kafka_events):
             .when(col("failure_reason") == "flaky_test", "test")
             .when(col("failure_reason") == "artifact_checksum_mismatch", "package")
             .when(col("failure_reason") == "rollout_timeout", "deployment")
+            .when(col("failure_reason") == "pipeline_failure", "pipeline")
+            .when(col("pipeline_status") == "failure", "pipeline")
             .when(col("exception_type").isNotNull(), "jenkins_runtime")
             .when(col("http_status_code") >= 500, "jenkins_http")
             .when(col("failure_reason").isNotNull(), "other")
@@ -245,19 +480,28 @@ def normalize_events(kafka_events):
                 "risk_hint",
                 "service_name",
                 "service_module",
+                "build_tool",
+                "dependency_cache",
                 "job_name",
                 "build_number",
                 "source_branch",
                 "target_environment",
+                "deployment_strategy",
                 "random_scenario",
                 "forced_success",
                 "disk_free_pct",
                 "cpu_temp_c",
                 "compile_time_ms",
+                "test_suite",
                 "test_total",
+                "passed_tests",
                 "failing_tests",
                 "test_duration_ms",
+                "artifact_name",
+                "artifact_checksum",
                 "artifact_size_mb",
+                "replicas_ready",
+                "replicas_expected",
                 "rollout_seconds",
                 "severity_text",
                 "trace_id",
@@ -270,7 +514,7 @@ def normalize_events(kafka_events):
                 "exception_message",
                 "raw_event",
             ),
-            {"ignoreNullFields": "false"},
+            {"ignoreNullFields": "true"}, # Actually, let's ignore null fields.
         ).alias("value"),
     )
 
