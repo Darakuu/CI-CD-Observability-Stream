@@ -8,25 +8,25 @@ class RegexField:
 
 
 TEXT_FIELDS = (
-    RegexField("ci_event_with_status", r"event=([A-Za-z0-9_-]+)[^\"]*\sstatus=(?:success|passed|failed)"),
-    RegexField("ci_failed_event", r"event=([A-Za-z0-9_-]+)[^\"]*\sstatus=failed"),
+    RegexField("ci_event_with_status", r'event=([A-Za-z0-9_-]+)[^"]*\s+status=(?:success|passed|failed)'),
+    RegexField("ci_failed_event", r'event=([A-Za-z0-9_-]+)[^"]*\s+status=failed'),
     RegexField("ci_first_event", r"event=([A-Za-z0-9_-]+)"),
     RegexField("ci_stage_from_log", r"stage=([A-Za-z0-9_-]+)"),
-    RegexField("ci_status", r"(?:^|\s)status=([A-Za-z0-9_-]+)"),
+    RegexField("ci_status", r"(?:^|\s+)status=([A-Za-z0-9_-]+)"),
     RegexField("pipeline_status", r"pipeline_status=([A-Za-z0-9_-]+)"),
-    RegexField("failure_reason", r"\sstatus=failed[^\"]*reason=([A-Za-z0-9_.-]+)"),
-    RegexField("failure_detail", r'detail=([^"\s]+)'),
+    RegexField("failure_reason", r'\s+status=failed[^"]*\s+reason=([A-Za-z0-9_.-]+)'),
+    RegexField("failure_detail", r'detail=([^\s"]+)'),
     RegexField("error_code", r"error_code=([A-Za-z0-9_-]+)"),
     RegexField("service_name", r"service=([A-Za-z0-9_.-]+)"),
-    RegexField("job_name", r'job_name=([^"\s]+)'),
-    RegexField("build_url", r'build_url=([^"\s]+)'),
+    RegexField("job_name", r'job_name=([^\s"]+)'),
+    RegexField("build_url", r'build_url=([^\s"]+)'),
     RegexField("source_branch", r"branch=([A-Za-z0-9_./-]+)"),
     RegexField("service_module", r"module=([A-Za-z0-9_.-]+)"),
     RegexField("build_tool", r"tool=([A-Za-z0-9_.-]+)"),
     RegexField("dependency_cache", r"dependency_cache=([A-Za-z0-9_.-]+)"),
     RegexField("test_suite", r"suite=([A-Za-z0-9_.-]+)"),
-    RegexField("artifact_name", r'artifact=([^"\s]+)'),
-    RegexField("artifact_checksum", r'checksum=([^"\s]+)'),
+    RegexField("artifact_name", r'artifact=([^\s"]+)'),
+    RegexField("artifact_checksum", r'checksum=([^\s"]+)'),
     RegexField("target_environment", r"environment=([A-Za-z0-9_.-]+)"),
     RegexField("deployment_strategy", r"strategy=([A-Za-z0-9_.-]+)"),
     RegexField("forced_success", r"forced_success=(true|false)"),
@@ -34,10 +34,10 @@ TEXT_FIELDS = (
     RegexField("trace_id", r'"traceId":"([A-Fa-f0-9]+)"'),
     RegexField("span_id", r'"spanId":"([A-Fa-f0-9]+)"'),
     RegexField("span_name", r'"name":"([^"]+)","startTimeUnixNano"'),
-    RegexField("http_method", r'"value":\{"stringValue":"([A-Z]+)"\},"key":"http.request.method"'),
-    RegexField("http_route", r'"value":\{"stringValue":"([^"]+)"\},"key":"http.route"'),
-    RegexField("exception_type", r'"value":\{"stringValue":"([^"]+)"\},"key":"exception.type"'),
-    RegexField("exception_message", r'"value":\{"stringValue":"([^"]+)"\},"key":"exception.message"'),
+    RegexField("http_method", r'"value":[{]"stringValue":"([A-Z]+)"[}],"key":"http.request.method"'),
+    RegexField("http_route", r'"value":[{]"stringValue":"([^"]+)"[}],"key":"http.route"'),
+    RegexField("exception_type", r'"value":[{]"stringValue":"([^"]+)"[}],"key":"exception.type"'),
+    RegexField("exception_message", r'"value":[{]"stringValue":"([^"]+)"[}],"key":"exception.message"'),
 )
 
 NUMBER_FIELDS = (
@@ -54,7 +54,7 @@ NUMBER_FIELDS = (
     RegexField("replicas_ready", r"replicas_ready=([0-9]+)"),
     RegexField("replicas_expected", r"replicas_expected=([0-9]+)"),
     RegexField("rollout_seconds", r"rollout_seconds=([0-9]+)"),
-    RegexField("http_status_code", r'"value":\{"intValue":"?([0-9]+)"?\},"key":"http.response.status_code"'),
+    RegexField("http_status_code", r'"value":[{]"intValue":"?([0-9]+)"?[}],"key":"http.response.status_code"'),
 )
 
 KNOWN_STAGE_EVENTS = ("checkout", "preflight", "build", "test", "package", "deploy")
