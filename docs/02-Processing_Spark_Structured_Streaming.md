@@ -2,27 +2,36 @@
 
 This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, extracts useful Jenkins pipeline fields, and writes enriched events to `cicd.otel.processed`.
 
+The processed topic is the handoff point for the next stage: the Spark MLlib component consumes `cicd.otel.processed`, scores the CI/CD events, and writes the ML result to `cicd.otel.scored`.
+
 ```mermaid
 flowchart TD
     RawKafka[("Kafka topic\ncicd.otel.raw")]
     Spark["Spark Structured Streaming\nspark-processor"]
     Checkpoints[("Spark checkpoints\nspark-checkpoints/")]
     ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
+    MLlib["Spark MLlib\nspark-mllib"]
+    ScoredKafka[("Kafka topic\ncicd.otel.scored")]
 
     RawKafka -->|"raw JSON events"| Spark
     Spark -->|"offset and progress state"| Checkpoints
     Spark -->|"processed JSON events"| ProcessedKafka
+    ProcessedKafka -->|"clean CI/CD events"| MLlib
+    MLlib -->|"risk-scored events"| ScoredKafka
 ```
 
 ## What this stage uses
 
 - Raw input topic: `cicd.otel.raw`
 - Processed output topic: `cicd.otel.processed`
+- Next consumer: `spark-mllib`
+- Next output topic: `cicd.otel.scored`
 - Spark checkpoint path: `/tmp/spark-checkpoints/cicd-otel-processed`
 - Component name added by Spark: `spark-structured-streaming`
 
 The Spark job only consumes from the raw topic and writes to the processed topic.
 It does not touch Jenkins, Logstash state files, or the OpenTelemetry output files.
+The MLlib stage then reads the processed topic as its input; this processor does not call MLlib directly.
 
 Both Kafka topics are created by `kafka-init` before Logstash and Spark start using them.
 This keeps the startup order predictable and avoids Spark subscribing to a topic that does not exist yet.

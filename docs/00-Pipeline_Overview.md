@@ -13,7 +13,8 @@ flowchart TD
     RawKafka[("Kafka topic\ncicd.otel.raw")]
     Spark["Spark Structured Streaming"]
     ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
-    KafkaUI["Kafka UI / consumers"]
+    MLlib["Spark MLlib\nrisk scoring"]
+    ScoredKafka[("Kafka topic\ncicd.otel.scored")]
 
     Jenkins -->|"OTLP telemetry"| OTel
     OTel -->|"writes"| Files
@@ -21,5 +22,6 @@ flowchart TD
     Logstash -->|"enriched JSON events"| RawKafka
     RawKafka -->|"raw telemetry stream"| Spark
     Spark -->|"processed events"| ProcessedKafka
-    ProcessedKafka -->|"inspect / consume"| KafkaUI
+    ProcessedKafka -->|"clean CI/CD events"| MLlib
+    MLlib -->|"scored observability events"| ScoredKafka
 ```
