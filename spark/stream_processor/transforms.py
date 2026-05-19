@@ -172,7 +172,7 @@ class JenkinsCiEventEnricher:
                     | col("span_pipeline_status").isNotNull()
                 ),
             )
-            .filter(col("is_console_event") | col("is_otel_build_span"))
+            .filter(col("is_console_event") | col("is_otel_build_span")) # This line REDUCES the amount of messages in .processed and further topics!
             .withColumn(
                 "ci_text",
                 when(col("is_console_event"), coalesce(col("message"), col("raw_event"))).otherwise(lit("")),
