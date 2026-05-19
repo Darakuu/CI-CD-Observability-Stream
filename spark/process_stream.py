@@ -1,3 +1,5 @@
+""" Refactored entrypoint 'main' file. """
+
 from stream_processor.config import StreamConfig
 from stream_processor.job import ProcessingJob
 from stream_processor.kafka_io import KafkaTelemetryStream
@@ -19,8 +21,7 @@ from stream_processor.transforms import ProcessedEventProjector
 
 CONFIG = StreamConfig.from_env()
 
-# Backwards-compatible names for anyone running or importing this script
-# directly, as it was before the refactor.
+# Backwards-compatible names so that the project doesn't break randomly after merge on main.
 KAFKA_BOOTSTRAP_SERVERS = CONFIG.kafka_bootstrap_servers
 RAW_TOPIC = CONFIG.raw_topic
 PROCESSED_TOPIC = CONFIG.processed_topic

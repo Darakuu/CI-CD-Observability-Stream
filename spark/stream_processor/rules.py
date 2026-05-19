@@ -1,3 +1,10 @@
+"""Parsing and output rules used by the telemetry transformer.
+
+Most Jenkins demo events arrive as compact key=value text inside a larger
+OpenTelemetry payload. Keeping the regexes and output fields here makes the
+transformation code easier to read and keeps field changes in one place.
+"""
+
 from dataclasses import dataclass
 
 

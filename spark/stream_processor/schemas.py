@@ -1,3 +1,9 @@
+"""OpenTelemetry schemas used when Spark expands trace payloads.
+
+The schemas cover only the fields this project needs. Spark can then read span
+attributes without forcing the rest of the OpenTelemetry document into code.
+"""
+
 from pyspark.sql.types import ArrayType
 from pyspark.sql.types import StringType
 from pyspark.sql.types import StructField

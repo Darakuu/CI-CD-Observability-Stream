@@ -1,3 +1,10 @@
+"""Kafka source and sink definitions for the Spark stream.
+
+The processor reads raw OpenTelemetry messages from one topic and writes a
+clean JSON event to the next topic. Checkpointing belongs to the sink because
+that is where Spark tracks streaming progress.
+"""
+
 from pyspark.sql import SparkSession
 
 from stream_processor.config import StreamConfig

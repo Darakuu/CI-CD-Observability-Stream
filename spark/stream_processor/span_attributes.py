@@ -1,3 +1,9 @@
+"""Helpers for reading typed OpenTelemetry span attributes.
+
+OpenTelemetry stores attributes as an array of key/value objects. These helpers
+hide the Spark SQL expression needed to pick one attribute by name.
+"""
+
 from pyspark.sql.functions import expr
 
 

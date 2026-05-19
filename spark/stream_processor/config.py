@@ -1,3 +1,9 @@
+"""Runtime settings for the Spark processing job.
+
+Docker Compose provides these values in normal runs. The defaults keep local
+Spark experiments pointed at the same topics and checkpoint path.
+"""
+
 import os
 from dataclasses import dataclass
 

@@ -1,3 +1,10 @@
+"""DataFrame transformations for the CI/CD telemetry stream.
+
+The classes follow the shape of the pipeline: unwrap the Kafka envelope,
+expand OpenTelemetry spans, enrich Jenkins CI fields, and finally project the
+compact event that the next pipeline stage will consume.
+"""
+
 from pyspark.sql.functions import coalesce
 from pyspark.sql.functions import col
 from pyspark.sql.functions import current_timestamp
@@ -34,6 +41,8 @@ class CiCdTelemetryTransformer:
         self.projector = ProcessedEventProjector()
 
     def transform(self, kafka_events):
+        # Keep the high-level flow readable; the heavier Spark expressions live
+        # in the smaller components below.
         normalized_events = self.kafka_normalizer.normalize(kafka_events)
         expanded_events = self.span_extractor.expand(normalized_events)
         enriched_events = self.ci_enricher.enrich(expanded_events)
@@ -42,6 +51,8 @@ class CiCdTelemetryTransformer:
 
 class KafkaEnvelopeNormalizer:
     def normalize(self, kafka_events):
+        # Spark exposes Kafka metadata alongside the message body. Keeping that
+        # envelope lets later dashboards trace a processed event back to Kafka.
         raw_events = kafka_events.select(
             col("topic").alias("source_topic"),
             col("partition").alias("source_partition"),
@@ -124,6 +135,8 @@ class JenkinsCiEventEnricher:
         self.non_empty = non_empty
 
     def enrich(self, events):
+        # Console log lines and OpenTelemetry build spans describe the same
+        # pipeline from different angles, so both feed the normalized CI fields.
         events = (
             events.withColumn(
                 "is_console_event",
@@ -273,6 +286,8 @@ class JenkinsCiEventEnricher:
 
 class ProcessedEventProjector:
     def project(self, events):
+        # Kafka expects key/value columns. The value is the clean JSON document
+        # that later ML, Elasticsearch, and Kibana steps can consume directly.
         events = (
             events.withColumn("is_failure", self._is_failure())
             .withColumn("failure_category", self._failure_category())

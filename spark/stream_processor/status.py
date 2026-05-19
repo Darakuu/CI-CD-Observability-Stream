@@ -1,3 +1,5 @@
+"""Status normalization shared by log-derived and span-derived events."""
+
 from pyspark.sql.functions import lit
 from pyspark.sql.functions import lower
 from pyspark.sql.functions import when
