@@ -82,7 +82,7 @@ admin / admin
 Or, if you prefer, via CLI:
 
 ```bash
-docker compose exec kafka kafka-console-consumer.sh \
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
   --topic cicd.otel.raw \
   --from-beginning

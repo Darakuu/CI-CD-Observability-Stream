@@ -96,7 +96,7 @@ On the first run Spark may take a bit longer because it has to download the Kafk
 After Jenkins has generated some telemetry, the processed topic can be checked with:
 
 ```bash
-docker compose exec kafka kafka-console-consumer.sh \
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
   --topic cicd.otel.processed \
   --from-beginning
