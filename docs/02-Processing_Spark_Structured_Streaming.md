@@ -103,3 +103,65 @@ docker compose exec kafka kafka-console-consumer.sh \
 ```
 
 The same topic can also be inspected from Kafka UI at http://localhost:8085. (easier to access)
+
+## Examples
+
+The following are real examples of structured events that you can expect to see in the Kafka UI.
+
+### Failed event due to CPU thermal throttling:
+
+```json
+{
+	"processing_component": "spark-structured-streaming",
+	"processed_at": "2026-05-19T12:40:53.297Z",
+	"otel_signal": "logs",
+	"event_dataset": "jenkins.build.console",
+	"ingestion_component": "logstash",
+	"source_topic": "cicd.otel.raw",
+	"source_partition": 0,
+	"source_offset": 57,
+	"source_kafka_timestamp": "2026-05-19T12:40:52.832Z",
+	"raw_event_sha256": "c0d7643348333f25d6576dc0263f3e54b97e2956b815a34c0144070a4d8b2a10",
+	"ci_event": "preflight",
+	"ci_stage": "preflight",
+	"ci_status": "failed",
+	"is_failure": true,
+	"failure_category": "infrastructure",
+	"failure_reason": "thermal_throttling",                       <---
+	"failure_detail": "agent_cpu_temperature_above_safe_limit",   <---
+	"risk_hint": 1.0,
+	"service_name": "demo-service",
+	"job_name": "demo-ci-observability",
+	"build_number": 4,
+	"raw_event": "{\"ingestion.component\":\"logstash\",\"@version\":\"1\",\"@timestamp\":\"2026-05-19T12:40:52.731330094Z\",\"message\":\"[2026-05-19T12:40:51.922Z] event=preflight stage=preflight status=failed service=demo-service job_name=demo-ci-observability build_number=4 reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit\",\"event.dataset\":\"jenkins.build.console\",\"host\":\"9e13401a41da\",\"ci.source\":\"jenkins-build-log\",\"otel.signal\":\"logs\",\"path\":\"/jenkins-home/jobs/demo-ci-observability/builds/4/log\"}"
+}
+```
+
+### Pipeline 'build' stage completed (and how much time elapsed):
+
+```json
+{
+	"processing_component": "spark-structured-streaming",
+	"processed_at": "2026-05-19T12:40:56.273Z",
+	"otel_signal": "logs",
+	"event_dataset": "jenkins.build.console",
+	"ingestion_component": "logstash",
+	"source_topic": "cicd.otel.raw",
+	"source_partition": 0,
+	"source_offset": 71,
+	"source_kafka_timestamp": "2026-05-19T12:40:55.862Z",
+	"raw_event_sha256": "d96bd852431215c0b52b9b7e383bd949775c941c0ff2cb36aff10543cf5e255f",
+	"ci_event": "build",
+	"ci_stage": "build",      <---
+	"ci_status": "success",   <---
+	"is_failure": false,
+	"risk_hint": 0.15,
+	"service_name": "demo-service",
+	"service_module": "demo-service-api",
+	"dependency_cache": "hit",
+	"job_name": "demo-ci-observability",
+	"build_number": 3,
+	"compile_time_ms": 6550,    <---
+	"raw_event": "{\"ingestion.component\":\"logstash\",\"@version\":\"1\",\"@timestamp\":\"2026-05-19T12:40:55.762166945Z\",\"message\":\"[2026-05-19T12:40:55.280Z] event=build stage=build status=success service=demo-service job_name=demo-ci-observability build_number=3 module=demo-service-api compile_time_ms=6550 dependency_cache=hit\",\"event.dataset\":\"jenkins.build.console\",\"host\":\"9e13401a41da\",\"ci.source\":\"jenkins-build-log\",\"otel.signal\":\"logs\",\"path\":\"/jenkins-home/jobs/demo-ci-observability/builds/3/log\"}"
+}
+```
