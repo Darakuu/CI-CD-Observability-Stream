@@ -194,6 +194,47 @@ services:
       - ELASTICSEARCH_BATCH_SIZE=200
       - ELASTICSEARCH_FLUSH_INTERVAL_SECONDS=5
 
+  kibana-security-setup:
+    image: curlimages/curl:8.10.1
+    container_name: tap-kibana-security-setup
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-admine}
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-kibana_system}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "Setting the kibana_system password for the local demo."
+        curl -fsS -u "elastic:$${ELASTICSEARCH_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -X POST "http://elasticsearch:9200/_security/user/kibana_system/_password" \
+          -d "{\"password\":\"$${KIBANA_SYSTEM_PASSWORD}\"}"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.19.0
+    container_name: tap-kibana
+    depends_on:
+      kibana-security-setup:
+        condition: service_completed_successfully
+    ports:
+      - "5601:5601"
+    environment:
+      - SERVER_NAME=tap-kibana
+      - SERVER_HOST=0.0.0.0
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:-kibana_system}
+      - XPACK_SECURITY_ENCRYPTIONKEY=tap-observability-local-demo-key-0001
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=tap-observability-local-demo-key-0002
+      - XPACK_REPORTING_ENCRYPTIONKEY=tap-observability-local-demo-key-0003
+      - NEWSFEED_ENABLED=false
+      - TELEMETRY_ENABLED=false
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+
   jenkins:
     build:
       context: ./jenkins
