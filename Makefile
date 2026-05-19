@@ -17,12 +17,12 @@ restart:
 
 clean:
 	docker compose down -v --remove-orphans
-	rm -rf jenkins_home logstash-data otel-output spark-checkpoints
+	rm -rf jenkins_home kafka-data logstash-data otel-output spark-checkpoints
 
 clean-keep-kibana:
 	docker compose down --remove-orphans
 	project_name=$${COMPOSE_PROJECT_NAME:-$$(basename "$$(pwd)")}; docker volume rm "$${project_name}_kafka-data" "$${project_name}_spark-checkpoints" 2>/dev/null || true
-	rm -rf jenkins_home logstash-data otel-output spark-checkpoints
+	rm -rf jenkins_home kafka-data logstash-data otel-output spark-checkpoints
 
 logs:
 	docker compose logs -f jenkins otel-collector logstash spark-processor spark-mllib elasticsearch elasticsearch-indexer kibana

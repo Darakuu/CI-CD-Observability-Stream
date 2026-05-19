@@ -38,6 +38,7 @@ htmlcov/
 
 # Runtime data
 jenkins_home/
+kafka-data/
 otel-output/
 logstash-data/
 spark-checkpoints/
