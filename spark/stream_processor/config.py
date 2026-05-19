@@ -16,6 +16,8 @@ DEFAULT_CHECKPOINT_LOCATION = "/tmp/spark-checkpoints/cicd-otel-processed"
 
 @dataclass(frozen=True)
 class StreamConfig:
+    """Configuration values used by the streaming job at runtime."""
+
     kafka_bootstrap_servers: str = DEFAULT_KAFKA_BOOTSTRAP_SERVERS
     raw_topic: str = DEFAULT_RAW_TOPIC
     processed_topic: str = DEFAULT_PROCESSED_TOPIC
@@ -23,6 +25,8 @@ class StreamConfig:
 
     @classmethod
     def from_env(cls) -> "StreamConfig":
+        """Build a config from environment variables, falling back to local defaults."""
+
         return cls(
             kafka_bootstrap_servers=os.getenv(
                 "KAFKA_BOOTSTRAP_SERVERS",

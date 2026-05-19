@@ -34,13 +34,19 @@ from stream_processor.status import normalize_pipeline_status
 
 
 class CiCdTelemetryTransformer:
+    """Runs the full DataFrame transformation from raw Kafka rows to processed events."""
+
     def __init__(self):
+        """Wire the smaller transformation steps in the order the stream uses them."""
+
         self.kafka_normalizer = KafkaEnvelopeNormalizer()
         self.span_extractor = OpenTelemetrySpanExtractor()
         self.ci_enricher = JenkinsCiEventEnricher()
         self.projector = ProcessedEventProjector()
 
     def transform(self, kafka_events):
+        """Normalize, enrich, and project raw Kafka events into the processed schema."""
+
         # Keep the high-level flow readable; the heavier Spark expressions live
         # in the smaller components below.
         normalized_events = self.kafka_normalizer.normalize(kafka_events)
@@ -50,7 +56,11 @@ class CiCdTelemetryTransformer:
 
 
 class KafkaEnvelopeNormalizer:
+    """Turns Spark's Kafka rows into telemetry rows with stable metadata columns."""
+
     def normalize(self, kafka_events):
+        """Keep the Kafka envelope and expose the raw message as a string column."""
+
         # Spark exposes Kafka metadata alongside the message body. Keeping that
         # envelope lets later dashboards trace a processed event back to Kafka.
         raw_events = kafka_events.select(
@@ -85,6 +95,8 @@ class KafkaEnvelopeNormalizer:
         )
 
     def _otel_signal(self):
+        """Infer the OpenTelemetry signal when Logstash did not already label it."""
+
         return coalesce(
             col("otel_signal_from_ingestion"),
             when(get_json_object(col("raw_event"), "$.resourceSpans").isNotNull(), "traces")
@@ -95,7 +107,11 @@ class KafkaEnvelopeNormalizer:
 
 
 class OpenTelemetrySpanExtractor:
+    """Expands trace payloads enough to reuse span details in CI/CD events."""
+
     def expand(self, normalized_events):
+        """Parse OpenTelemetry traces and attach selected span fields to each row."""
+
         return (
             normalized_events.withColumn(
                 "otel_trace",
@@ -131,10 +147,16 @@ class OpenTelemetrySpanExtractor:
 
 
 class JenkinsCiEventEnricher:
+    """Builds CI/CD fields from Jenkins console lines and OpenTelemetry spans."""
+
     def __init__(self, non_empty=None):
+        """Allow tests to inject the empty-string handling while production uses Spark."""
+
         self.non_empty = non_empty
 
     def enrich(self, events):
+        """Filter relevant Jenkins events and derive the normalized CI fields."""
+
         # Console log lines and OpenTelemetry build spans describe the same
         # pipeline from different angles, so both feed the normalized CI fields.
         events = (
@@ -170,6 +192,8 @@ class JenkinsCiEventEnricher:
         return self._derive_ci_fields(events)
 
     def _extract_regex_fields(self, events):
+        """Apply the configured text and numeric regex rules to the CI log text."""
+
         for rule in TEXT_FIELDS:
             events = events.withColumn(
                 rule.name,
@@ -185,6 +209,8 @@ class JenkinsCiEventEnricher:
         return events
 
     def _empty_strings_to_null(self, events):
+        """Convert missing regex matches from empty strings to null-like values."""
+
         for rule in TEXT_FIELDS:
             events = events.withColumn(rule.name, self._non_empty(rule.name))
 
@@ -194,6 +220,8 @@ class JenkinsCiEventEnricher:
         )
 
     def _derive_ci_fields(self, events):
+        """Combine parsed log fields and span fields into the final CI columns."""
+
         return (
             events.withColumn(
                 "ci_event",
@@ -278,6 +306,8 @@ class JenkinsCiEventEnricher:
         )
 
     def _non_empty(self, column_name):
+        """Return the column only when the extracted text contains a value."""
+
         if self.non_empty is not None:
             return self.non_empty(column_name)
 
@@ -285,7 +315,11 @@ class JenkinsCiEventEnricher:
 
 
 class ProcessedEventProjector:
+    """Selects the final event shape that is written to the processed Kafka topic."""
+
     def project(self, events):
+        """Create Kafka key/value columns from the enriched telemetry rows."""
+
         # Kafka expects key/value columns. The value is the clean JSON document
         # that later ML, Elasticsearch, and Kibana steps can consume directly.
         events = (
@@ -303,6 +337,8 @@ class ProcessedEventProjector:
         )
 
     def _is_failure(self):
+        """Build the boolean expression that marks failed or risky CI/CD events."""
+
         return (
             when(col("failure_reason").isNotNull(), lit(True))
             .when(col("exception_type").isNotNull(), lit(True))
@@ -314,6 +350,8 @@ class ProcessedEventProjector:
         )
 
     def _failure_category(self):
+        """Classify known failure reasons into broad dashboard-friendly groups."""
+
         return (
             when(col("failure_reason").isin("disk_full", "thermal_throttling"), "infrastructure")
             .when(col("failure_reason") == "scm_timeout", "source_control")
@@ -330,6 +368,8 @@ class ProcessedEventProjector:
         )
 
     def _risk_hint(self):
+        """Assign a simple score that later ML and dashboards can treat as a hint."""
+
         return (
             when(col("is_failure"), lit(1.0))
             .when(col("severity_text") == "WARNING", lit(0.6))

@@ -11,10 +11,14 @@ from stream_processor.config import StreamConfig
 
 
 class KafkaTelemetryStream:
+    """Holds the Kafka read and write settings for the telemetry stream."""
+
     def __init__(self, config: StreamConfig):
         self.config = config
 
     def read_raw_events(self, spark: SparkSession):
+        """Create a streaming DataFrame over the raw CI/CD telemetry topic."""
+
         return (
             spark.readStream.format("kafka")
             .option("kafka.bootstrap.servers", self.config.kafka_bootstrap_servers)
@@ -25,6 +29,8 @@ class KafkaTelemetryStream:
         )
 
     def write_processed_events(self, processed_events):
+        """Write processed telemetry events to Kafka with Spark checkpointing enabled."""
+
         return (
             processed_events.writeStream.format("kafka")
             .option("kafka.bootstrap.servers", self.config.kafka_bootstrap_servers)

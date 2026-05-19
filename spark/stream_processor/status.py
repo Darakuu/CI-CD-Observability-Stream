@@ -6,6 +6,8 @@ from pyspark.sql.functions import when
 
 
 def normalize_pipeline_status(status_column):
+    """Map Jenkins and OpenTelemetry result words to a common pipeline status."""
+
     normalized = lower(status_column)
     return (
         when(normalized.isin("failure", "failed", "error"), lit("failure"))
@@ -15,6 +17,8 @@ def normalize_pipeline_status(status_column):
 
 
 def normalize_ci_status(status_column):
+    """Map stage-level result words to the CI status used by processed events."""
+
     normalized = lower(status_column)
     return (
         when(normalized.isin("failure", "failed", "error"), lit("failed"))

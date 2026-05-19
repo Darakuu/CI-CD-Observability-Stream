@@ -8,6 +8,8 @@ SHUFFLE_PARTITIONS = "2"
 
 
 def build_spark_session() -> SparkSession:
+    """Create the Spark session used by the local streaming processor."""
+
     # The job is small, so two shuffle partitions keep the Structured Streaming batches lighter.
     return (
         SparkSession.builder.appName(APP_NAME)

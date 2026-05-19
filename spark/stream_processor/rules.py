@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RegexField:
+    """Names one field that can be extracted from Jenkins text with a regex."""
+
     name: str
     pattern: str
 

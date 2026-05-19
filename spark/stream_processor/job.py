@@ -11,12 +11,18 @@ from stream_processor.transforms import CiCdTelemetryTransformer
 
 
 class ProcessingJob:
+    """Coordinates the Spark session, Kafka stream, and telemetry transformations."""
+
     def __init__(self, config: StreamConfig):
+        """Prepare the job with its runtime config and processing helpers."""
+
         self.config = config
         self.kafka = KafkaTelemetryStream(config)
         self.transformer = CiCdTelemetryTransformer()
 
     def start(self):
+        """Start the Structured Streaming query and return Spark's query handle."""
+
         spark = build_spark_session()
         spark.sparkContext.setLogLevel("WARN")
 
@@ -27,4 +33,6 @@ class ProcessingJob:
         return self.kafka.write_processed_events(processed_events)
 
     def run(self) -> None:
+        """Run the processor until Spark is stopped or the query fails."""
+
         self.start().awaitTermination()
