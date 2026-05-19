@@ -51,6 +51,7 @@ services:
         # Create pipeline topics before producers and consumers attach to them.
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic cicd.otel.raw --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic cicd.otel.processed --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic cicd.otel.scored --partitions 1 --replication-factor 1
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -118,6 +119,32 @@ services:
       - --conf
       - spark.jars.ivy=/tmp/.ivy2
       - /opt/tap/spark/process_stream.py
+
+  spark-mllib:
+    build:
+      context: ./spark
+    container_name: tap-spark-mllib
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      spark-processor:
+        condition: service_started
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - ML_INPUT_TOPIC=cicd.otel.processed
+      - ML_OUTPUT_TOPIC=cicd.otel.scored
+      - ML_CHECKPOINT_LOCATION=/tmp/spark-checkpoints/cicd-otel-scored
+    volumes:
+      - spark-checkpoints:/tmp/spark-checkpoints:rw
+    command:
+      - /opt/spark/bin/spark-submit
+      - --packages
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - /opt/tap/spark/score_stream.py
 
   jenkins:
     build:
