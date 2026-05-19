@@ -78,13 +78,13 @@ pipeline {
             '    echo "event=preflight stage=preflight status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=disk_full detail=workspace_volume_available_space_below_1_percent"',
             '    exit 21',
             '    ;;',
-            '  4)',
-            '    echo "event=preflight stage=preflight status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit"',
-            '    exit 22',
-            '    ;;',
             'esac',
             'disk_free_pct=$((35 + scenario))',
-            'cpu_temp_c=$((55 + scenario))',
+            'cpu_temp_c=$((56 + scenario * 4))',
+            'if [ "$cpu_temp_c" -gt 90 ]; then',
+            '  echo "event=preflight stage=preflight status=failed service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit disk_free_pct=$disk_free_pct cpu_temp_c=$cpu_temp_c"',
+            '  exit 22',
+            'fi',
             'echo "event=preflight stage=preflight status=success service=$SERVICE_NAME job_name=$JOB_NAME build_number=$BUILD_NUMBER disk_free_pct=$disk_free_pct cpu_temp_c=$cpu_temp_c"',
             'sleep 1'
           ].join('\\n')
