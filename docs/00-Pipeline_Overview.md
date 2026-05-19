@@ -16,6 +16,7 @@ flowchart TD
     MLlib["Spark MLlib\nrisk scoring"]
     ScoredKafka[("Kafka topic\ncicd.otel.scored")]
     Elasticsearch["Elasticsearch\ncicd-observability-events"]
+    Kibana["Kibana\nCI/CD dashboard"]
 
     Jenkins -->|"OTLP telemetry"| OTel
     OTel -->|"writes"| Files
@@ -26,4 +27,5 @@ flowchart TD
     ProcessedKafka -->|"clean CI/CD events"| MLlib
     MLlib -->|"scored observability events"| ScoredKafka
     ScoredKafka -->|"bulk indexed documents"| Elasticsearch
+    Elasticsearch -->|"data view and dashboard"| Kibana
 ```

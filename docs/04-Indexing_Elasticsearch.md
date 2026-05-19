@@ -1,6 +1,6 @@
 # Indexing with Elasticsearch
 
-This step runs after the Spark MLlib scorer. It consumes ML-scored CI/CD events from Kafka and indexes them into Elasticsearch so Kibana can build a live dashboard later.
+This step runs after the Spark MLlib scorer. It consumes ML-scored CI/CD events from Kafka and indexes them into Elasticsearch so Kibana can build the live CI/CD dashboard.
 
 ```mermaid
 flowchart TD
@@ -49,6 +49,8 @@ docker compose up -d --build
 ```
 
 Elasticsearch is exposed on http://localhost:9200 and the indexer starts as `elasticsearch-indexer`.
+Kibana is exposed on http://localhost:5601. Dashboards are created manually in
+the Kibana UI from the `cicd-observability-events` data view.
 
 Check the Elasticsearch containers with:
 
