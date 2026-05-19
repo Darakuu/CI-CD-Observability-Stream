@@ -1,0 +1,2 @@
+elasticsearch>=8.15,<9
+kafka-python>=2.0,<3

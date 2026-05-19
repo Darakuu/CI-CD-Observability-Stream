@@ -146,6 +146,52 @@ services:
       - spark.jars.ivy=/tmp/.ivy2
       - /opt/tap/spark/score_stream.py
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
+    container_name: tap-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - cluster.name=tap-observability
+      - node.name=tap-es01
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-admine}
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -u elastic:$${ELASTIC_PASSWORD} 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  elasticsearch-indexer:
+    build:
+      context: ./elastic_indexer
+    container_name: tap-elasticsearch-indexer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      spark-mllib:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - ELASTICSEARCH_INPUT_TOPIC=cicd.otel.scored
+      - ELASTICSEARCH_KAFKA_GROUP_ID=elasticsearch-indexer
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-admine}
+      - ELASTICSEARCH_INDEX=cicd-observability-events
+      - ELASTICSEARCH_BATCH_SIZE=200
+      - ELASTICSEARCH_FLUSH_INTERVAL_SECONDS=5
+
   jenkins:
     build:
       context: ./jenkins
@@ -168,4 +214,5 @@ services:
       - ./jenkins_home:/var/jenkins_home
 
 volumes:
+  elasticsearch-data:
   spark-checkpoints:

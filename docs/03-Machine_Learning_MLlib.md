@@ -81,7 +81,7 @@ Each scored Kafka message keeps the original processed fields and adds ML-specif
 }
 ```
 
-The topic is designed as the next handoff point. The future Elasticsearch step can consume `cicd.otel.scored` and index one document per scored CI/CD event.
+The topic is the handoff point for Elasticsearch. The indexer consumes `cicd.otel.scored` and indexes one document per scored CI/CD event.
 
 ## Running it
 
