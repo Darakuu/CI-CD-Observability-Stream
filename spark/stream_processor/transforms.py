@@ -7,11 +7,14 @@ compact event that the next pipeline stage will consume.
 
 from pyspark.sql.functions import coalesce
 from pyspark.sql.functions import col
+from pyspark.sql.functions import concat_ws
 from pyspark.sql.functions import current_timestamp
 from pyspark.sql.functions import explode_outer
 from pyspark.sql.functions import from_json
 from pyspark.sql.functions import get_json_object
+from pyspark.sql.functions import greatest
 from pyspark.sql.functions import json_tuple
+from pyspark.sql.functions import least
 from pyspark.sql.functions import length
 from pyspark.sql.functions import lit
 from pyspark.sql.functions import lower
@@ -75,10 +78,12 @@ class KafkaEnvelopeNormalizer:
             "*",
             json_tuple(
                 col("raw_event"),
+                "@timestamp",
                 "otel.signal",
                 "event.dataset",
                 "ingestion.component",
             ).alias(
+                "observed_at",
                 "otel_signal_from_ingestion",
                 "event_dataset",
                 "ingestion_component",
@@ -189,7 +194,7 @@ class JenkinsCiEventEnricher:
 
         events = self._extract_regex_fields(events)
         events = self._empty_strings_to_null(events)
-        return self._derive_ci_fields(events)
+        return self._derive_ci_fields(events).filter(self._kept_observability_event())
 
     def _extract_regex_fields(self, events):
         """Apply the configured text and numeric regex rules to the CI log text."""
@@ -233,7 +238,6 @@ class JenkinsCiEventEnricher:
                     when(col("pipeline_status").isNotNull(), lit("pipeline_result")),
                     when(col("build_url").isNotNull(), lit("build_summary")),
                     when(col("exception_type").isNotNull(), lit("jenkins_exception")),
-                    when(col("http_status_code").isNotNull(), lit("jenkins_http")),
                 ),
             )
             .withColumn(
@@ -305,6 +309,14 @@ class JenkinsCiEventEnricher:
             )
         )
 
+    def _kept_observability_event(self):
+        """Keep only result-level events useful to ML and dashboards."""
+
+        return (
+            (col("ci_status").isNotNull() | col("pipeline_status").isNotNull())
+            & ~coalesce(col("ci_event").isin("build_report", "build_summary", "stage_start", "simulation"), lit(False))
+        )
+
     def _non_empty(self, column_name):
         """Return the column only when the extracted text contains a value."""
 
@@ -322,9 +334,31 @@ class ProcessedEventProjector:
 
         # Kafka expects key/value columns. The value is the clean JSON document
         # that later ML, Elasticsearch, and Kibana steps can consume directly.
+        # The raw payload stays out of the lower stages; the hash keeps a trace
+        # back to the original record without carrying noisy log text forward.
         events = (
-            events.withColumn("is_failure", self._is_failure())
+            events.withColumn("source_system", lit("jenkins"))
+            .withColumn("event_source", self._event_source())
+            .withColumn("stage_order", self._stage_order())
+            .withColumn("feature_scm_pressure", self._feature_scm_pressure())
+            .withColumn("feature_agent_pressure", self._feature_agent_pressure())
+            .withColumn("feature_build_pressure", self._feature_build_pressure())
+            .withColumn("feature_test_pressure", self._feature_test_pressure())
+            .withColumn("feature_artifact_pressure", self._feature_artifact_pressure())
+            .withColumn("feature_deploy_pressure", self._feature_deploy_pressure())
+            .withColumn("feature_overall_pressure", self._feature_overall_pressure())
+            .withColumn("is_failure", self._is_failure())
             .withColumn("failure_category", self._failure_category())
+            .withColumn("signal_domain", self._signal_domain())
+            .withColumn("signal_name", self._signal_name())
+            .withColumn("signal_value", self._signal_value())
+            .withColumn("signal_unit", self._signal_unit())
+            .withColumn("severity_level", self._severity_level())
+            .withColumn("alert_candidate", self._alert_candidate())
+            .withColumn("alert_type", self._alert_type())
+            .withColumn("alert_reason", self._alert_reason())
+            .withColumn("event_kind", self._event_kind())
+            .withColumn("event_summary", self._event_summary())
             .withColumn("risk_hint", self._risk_hint())
         )
 
@@ -336,13 +370,99 @@ class ProcessedEventProjector:
             ).alias("value"),
         )
 
+    def _bounded(self, expression):
+        """Clamp a numeric expression to the 0..1 range used by feature columns."""
+
+        return least(greatest(expression, lit(0.0)), lit(1.0))
+
+    def _event_source(self):
+        return (
+            when(col("is_console_event"), lit("jenkins_console_log"))
+            .when(col("is_otel_build_span"), lit("jenkins_otel_span"))
+            .otherwise(lit("unknown"))
+        )
+
+    def _stage_order(self):
+        return (
+            when(col("ci_stage") == "checkout", lit(1))
+            .when(col("ci_stage") == "preflight", lit(2))
+            .when(col("ci_stage") == "build", lit(3))
+            .when(col("ci_stage") == "test", lit(4))
+            .when(col("ci_stage") == "package", lit(5))
+            .when(col("ci_stage") == "deploy", lit(6))
+            .when(col("ci_stage") == "pipeline", lit(7))
+        )
+
+    def _feature_scm_pressure(self):
+        latency_pressure = self._bounded(
+            (coalesce(col("scm_latency_ms"), lit(0)).cast("double") - lit(2500.0)) / lit(2700.0)
+        )
+        retry_pressure = self._bounded(coalesce(col("retry_count"), lit(0)).cast("double") / lit(3.0))
+        return greatest(latency_pressure, retry_pressure)
+
+    def _feature_agent_pressure(self):
+        disk_pressure = self._bounded((lit(25.0) - coalesce(col("disk_free_pct"), lit(100))) / lit(25.0))
+        heat_pressure = self._bounded((coalesce(col("cpu_temp_c"), lit(0)).cast("double") - lit(70.0)) / lit(25.0))
+        return greatest(disk_pressure, heat_pressure)
+
+    def _feature_build_pressure(self):
+        compile_pressure = self._bounded(
+            coalesce(col("compile_time_ms"), lit(0)).cast("double") / lit(12000.0)
+        )
+        cache_pressure = when(col("dependency_cache") == "miss", lit(1.0)).otherwise(lit(0.0))
+        return greatest(compile_pressure, cache_pressure)
+
+    def _feature_test_pressure(self):
+        failure_ratio = (
+            when(
+                coalesce(col("test_total"), lit(0)) > 0,
+                coalesce(col("failing_tests"), lit(0)).cast("double") / col("test_total").cast("double"),
+            )
+            .when(coalesce(col("failing_tests"), lit(0)) > 0, lit(1.0))
+            .otherwise(lit(0.0))
+        )
+        duration_pressure = self._bounded(
+            coalesce(col("test_duration_ms"), lit(0)).cast("double") / lit(12000.0)
+        )
+        return greatest(failure_ratio, duration_pressure)
+
+    def _feature_artifact_pressure(self):
+        return self._bounded(
+            (coalesce(col("artifact_size_mb"), lit(0)).cast("double") - lit(18.0)) / lit(6.0)
+        )
+
+    def _feature_deploy_pressure(self):
+        duration_pressure = self._bounded(
+            coalesce(col("rollout_seconds"), lit(0)).cast("double") / lit(120.0)
+        )
+        replica_gap = when(
+            coalesce(col("replicas_expected"), lit(0)) > 0,
+            self._bounded(
+                (
+                    col("replicas_expected").cast("double")
+                    - coalesce(col("replicas_ready"), lit(0)).cast("double")
+                )
+                / col("replicas_expected").cast("double")
+            ),
+        ).otherwise(lit(0.0))
+        return greatest(duration_pressure, replica_gap)
+
+    def _feature_overall_pressure(self):
+        return greatest(
+            col("feature_scm_pressure"),
+            col("feature_agent_pressure"),
+            col("feature_build_pressure"),
+            col("feature_test_pressure"),
+            col("feature_artifact_pressure"),
+            col("feature_deploy_pressure"),
+        )
+
     def _is_failure(self):
         """Build the boolean expression that marks failed or risky CI/CD events."""
 
         return (
             when(col("failure_reason").isNotNull(), lit(True))
             .when(col("exception_type").isNotNull(), lit(True))
-            .when(col("http_status_code") >= 500, lit(True))
             .when(col("otel_status_code") >= 2, lit(True))
             .when(col("pipeline_status") == "failure", lit(True))
             .when(col("ci_status") == "failed", lit(True))
@@ -362,9 +482,130 @@ class ProcessedEventProjector:
             .when(col("failure_reason") == "pipeline_failure", "pipeline")
             .when(col("pipeline_status") == "failure", "pipeline")
             .when(col("exception_type").isNotNull(), "jenkins_runtime")
-            .when(col("http_status_code") >= 500, "jenkins_http")
             .when(col("failure_reason").isNotNull(), "other")
             .otherwise(lit(None))
+        )
+
+    def _signal_domain(self):
+        return (
+            when((col("ci_stage") == "checkout") | (col("failure_reason") == "scm_timeout"), lit("source_control"))
+            .when(
+                (col("ci_stage") == "preflight")
+                | col("failure_reason").isin("disk_full", "thermal_throttling"),
+                lit("agent_health"),
+            )
+            .when((col("ci_stage") == "build") | (col("failure_reason") == "dependency_resolution"), lit("build"))
+            .when((col("ci_stage") == "test") | (col("failure_reason") == "flaky_test"), lit("test_quality"))
+            .when(
+                (col("ci_stage") == "package") | (col("failure_reason") == "artifact_checksum_mismatch"),
+                lit("artifact"),
+            )
+            .when((col("ci_stage") == "deploy") | (col("failure_reason") == "rollout_timeout"), lit("deployment"))
+            .when(col("ci_stage") == "pipeline", lit("pipeline"))
+            .when(col("exception_type").isNotNull(), lit("jenkins_runtime"))
+            .otherwise(lit("unknown"))
+        )
+
+    def _signal_name(self):
+        disk_pressure = self._bounded((lit(25.0) - coalesce(col("disk_free_pct"), lit(100))) / lit(25.0))
+        heat_pressure = self._bounded((coalesce(col("cpu_temp_c"), lit(0)).cast("double") - lit(70.0)) / lit(25.0))
+
+        return (
+            when(col("signal_domain") == "source_control", lit("scm_latency"))
+            .when((col("failure_reason") == "disk_full"), lit("disk_free_pct"))
+            .when((col("failure_reason") == "thermal_throttling"), lit("cpu_temp_c"))
+            .when((col("signal_domain") == "agent_health") & (disk_pressure >= heat_pressure), lit("disk_free_pct"))
+            .when((col("signal_domain") == "agent_health") & col("cpu_temp_c").isNotNull(), lit("cpu_temp_c"))
+            .when((col("signal_domain") == "build") & (col("dependency_cache") == "miss"), lit("dependency_cache"))
+            .when(col("signal_domain") == "build", lit("compile_time_ms"))
+            .when((col("signal_domain") == "test_quality") & (coalesce(col("failing_tests"), lit(0)) > 0), lit("test_failure_ratio"))
+            .when(col("signal_domain") == "test_quality", lit("test_duration_ms"))
+            .when(col("signal_domain") == "artifact", lit("artifact_size_mb"))
+            .when((col("signal_domain") == "deployment") & (col("replicas_ready") < col("replicas_expected")), lit("replica_readiness_gap"))
+            .when(col("signal_domain") == "deployment", lit("rollout_seconds"))
+            .when(col("signal_domain") == "pipeline", lit("pipeline_status"))
+            .otherwise(lit("unknown"))
+        )
+
+    def _signal_value(self):
+        test_ratio = when(
+            coalesce(col("test_total"), lit(0)) > 0,
+            coalesce(col("failing_tests"), lit(0)).cast("double") / col("test_total").cast("double"),
+        )
+        replica_gap = when(
+            coalesce(col("replicas_expected"), lit(0)) > 0,
+            col("replicas_expected").cast("double") - coalesce(col("replicas_ready"), lit(0)).cast("double"),
+        )
+
+        return (
+            when(col("signal_name") == "scm_latency", col("scm_latency_ms").cast("double"))
+            .when(col("signal_name") == "disk_free_pct", col("disk_free_pct").cast("double"))
+            .when(col("signal_name") == "cpu_temp_c", col("cpu_temp_c").cast("double"))
+            .when(col("signal_name") == "dependency_cache", when(col("dependency_cache") == "miss", lit(1.0)).otherwise(lit(0.0)))
+            .when(col("signal_name") == "compile_time_ms", col("compile_time_ms").cast("double"))
+            .when(col("signal_name") == "test_failure_ratio", test_ratio)
+            .when(col("signal_name") == "test_duration_ms", col("test_duration_ms").cast("double"))
+            .when(col("signal_name") == "artifact_size_mb", col("artifact_size_mb").cast("double"))
+            .when(col("signal_name") == "replica_readiness_gap", replica_gap)
+            .when(col("signal_name") == "rollout_seconds", col("rollout_seconds").cast("double"))
+        )
+
+    def _signal_unit(self):
+        return (
+            when(col("signal_name").isin("scm_latency", "compile_time_ms", "test_duration_ms"), lit("ms"))
+            .when(col("signal_name") == "disk_free_pct", lit("percent"))
+            .when(col("signal_name") == "cpu_temp_c", lit("celsius"))
+            .when(col("signal_name") == "test_failure_ratio", lit("ratio"))
+            .when(col("signal_name") == "artifact_size_mb", lit("mb"))
+            .when(col("signal_name") == "rollout_seconds", lit("seconds"))
+            .when(col("signal_name").isin("replica_readiness_gap", "dependency_cache"), lit("count"))
+        )
+
+    def _severity_level(self):
+        return (
+            when(col("is_failure"), lit("critical"))
+            .when(col("feature_overall_pressure") >= lit(0.85), lit("critical"))
+            .when((col("feature_overall_pressure") >= lit(0.65)) | (col("severity_text") == "WARNING"), lit("warning"))
+            .otherwise(lit("normal"))
+        )
+
+    def _alert_candidate(self):
+        return (
+            (~coalesce(col("is_failure"), lit(False)))
+            & (col("feature_overall_pressure") >= lit(0.65))
+            & col("ci_stage").isNotNull()
+        )
+
+    def _alert_type(self):
+        return (
+            when(col("is_failure"), concat_ws("_", lit("failure"), col("failure_category")))
+            .when(col("alert_candidate"), concat_ws("_", lit("predictive"), col("signal_domain"), col("signal_name")))
+        )
+
+    def _alert_reason(self):
+        return (
+            when(col("is_failure"), coalesce(col("failure_reason"), lit("pipeline_failure")))
+            .when(col("alert_candidate"), concat_ws("_", col("signal_name"), lit("near_limit")))
+        )
+
+    def _event_kind(self):
+        return (
+            when(col("is_failure"), lit("failure"))
+            .when(col("alert_candidate"), lit("predictive_signal"))
+            .when(col("ci_event") == "simulation", lit("simulation"))
+            .when(col("ci_event") == "stage_start", lit("stage_start"))
+            .when(col("pipeline_status").isNotNull(), lit("pipeline_result"))
+            .when(col("ci_status").isin("success", "passed"), lit("stage_result"))
+            .otherwise(lit("telemetry"))
+        )
+
+    def _event_summary(self):
+        return concat_ws(
+            " ",
+            col("event_kind"),
+            col("signal_domain"),
+            col("signal_name"),
+            col("severity_level"),
         )
 
     def _risk_hint(self):
@@ -372,8 +613,9 @@ class ProcessedEventProjector:
 
         return (
             when(col("is_failure"), lit(1.0))
+            .when(col("feature_overall_pressure") >= lit(0.85), lit(0.9))
+            .when(col("feature_overall_pressure") >= lit(0.65), lit(0.7))
             .when(col("severity_text") == "WARNING", lit(0.6))
-            .when(col("http_status_code") >= 400, lit(0.6))
             .when(col("ci_stage").isin("deploy", "package"), lit(0.3))
             .when(col("ci_stage").isNotNull(), lit(0.15))
             .otherwise(lit(0.05))

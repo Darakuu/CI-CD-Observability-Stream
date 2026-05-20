@@ -1,6 +1,6 @@
 [project]
 name = "ci-cd_observability_stream"
-version = "0.1.0"
+version = "0.9.0"
 description = "UniCT TAP project: A way to analyze events incoming from a CI/CD pipeline."
 readme = "README.md"
 requires-python = ">=3.12"

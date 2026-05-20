@@ -1,6 +1,6 @@
 # Processing with Spark Structured Streaming
 
-This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, extracts useful Jenkins pipeline fields, and writes enriched events to `cicd.otel.processed`.
+This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, keeps only result-level pipeline events, and writes cleaned observability events to `cicd.otel.processed`.
 
 The processed topic is the handoff point for the next stage: the Spark MLlib component consumes `cicd.otel.processed`, scores the CI/CD events, and writes the ML result to `cicd.otel.scored`.
 
@@ -38,25 +38,29 @@ This keeps the startup order predictable and avoids Spark subscribing to a topic
 
 ## What Spark writes
 
-Each message written to Kafka uses `raw_event_sha256` as the key.
-For a successful build-stage event, the value is a JSON object like this:
+Each message written to Kafka uses `raw_event_sha256` as the key. Spark uses the
+raw payload only while parsing; it does not forward the raw log body to lower
+pipeline stages. For a build-stage event, the value is a JSON object like this:
 
 ```json
 {
   "processing_component": "spark-structured-streaming",
   "processed_at": "2026-05-11T00:00:00.000Z",
-  "otel_signal": "logs",
-  "event_dataset": "jenkins.build.console",
-  "ingestion_component": "logstash",
-  "source_topic": "cicd.otel.raw",
-  "source_partition": 0,
-  "source_offset": 42,
-  "source_kafka_timestamp": "2026-05-11T00:00:00.000Z",
   "raw_event_sha256": "sha256-of-the-original-event",
+  "observed_at": "2026-05-11T00:00:00.000Z",
   "ci_event": "build",
   "ci_stage": "build",
+  "stage_order": 3,
   "ci_status": "success",
+  "event_kind": "stage_result",
+  "signal_domain": "build",
+  "signal_name": "compile_time_ms",
+  "signal_value": 4200,
+  "signal_unit": "ms",
+  "severity_level": "normal",
+  "event_summary": "stage_result build compile_time_ms normal",
   "is_failure": false,
+  "alert_candidate": false,
   "risk_hint": 0.15,
   "service_name": "demo-service",
   "service_module": "demo-service-api",
@@ -64,7 +68,8 @@ For a successful build-stage event, the value is a JSON object like this:
   "job_name": "demo-ci-observability",
   "build_number": 42,
   "compile_time_ms": 4200,
-  "raw_event": "{...original Logstash event...}"
+  "feature_build_pressure": 0.35,
+  "feature_overall_pressure": 0.35
 }
 ```
 
@@ -72,24 +77,27 @@ Fields whose value is null are omitted from the JSON, to improve a message's rea
 
 **Downstream Spark stages should read this topic with an explicit schema.**
 
+Spark intentionally drops noisy console events such as `stage_start`,
+`simulation`, and context-only lines. The processed topic is stage-result and
+pipeline-result oriented, so MLlib is not asked to score every Jenkins log line.
+
 The simulated Jenkins pipeline reports extra fields on the events where they
-make sense. Spark extracts and forwards these optional features when present:
+make sense. Spark turns those fields into compact signal categories and pressure
+features:
 
-| Jenkins event | Optional processed fields |
-| --- | --- |
-| `checkout` | `source_branch` |
-| `preflight` | `disk_free_pct`, `cpu_temp_c` |
-| `build` | `service_module`, `build_tool`, `dependency_cache`, `compile_time_ms` |
-| `test` | `test_suite`, `test_total`, `passed_tests`, `failing_tests`, `test_duration_ms`, `error_code` |
-| `package` | `artifact_name`, `artifact_size_mb`, `artifact_checksum` |
-| `deploy` | `target_environment`, `deployment_strategy`, `replicas_ready`, `replicas_expected`, `rollout_seconds` |
-| `simulation` | `random_scenario`, `forced_success` |
-| `pipeline_result`, `build_summary`, `build_report` | `pipeline_status`, `build_url`, OpenTelemetry span identifiers when available |
+| Jenkins event | Main signal domain | Example feature pressure |
+| --- | --- | --- |
+| `checkout` | `source_control` | `feature_scm_pressure` from latency and retry count |
+| `preflight` | `agent_health` | `feature_agent_pressure` from disk and CPU temperature |
+| `build` | `build` | `feature_build_pressure` from compile time and cache misses |
+| `test` | `test_quality` | `feature_test_pressure` from failures and duration |
+| `package` | `artifact` | `feature_artifact_pressure` from artifact size |
+| `deploy` | `deployment` | `feature_deploy_pressure` from rollout time and replica gap |
 
-The original event is still kept in `raw_event`.
-This is useful because the next stages can still access the full OpenTelemetry payload, while the extracted fields give MLlib, Elasticsearch and Kibana a cleaner base to work with.
-
-The `risk_hint` field is not the final ML result. It is only a simple Spark-side signal: failed events get a high value, warnings get a medium value, and normal CI stage events get a low value. The real prediction/anomaly logic belongs to the later MLlib stage.
+The `risk_hint`, `severity_level`, and `alert_candidate` fields are Spark-side
+triage hints for humans and dashboards. The MLlib model does not use those
+fields as features; it predicts from stage, signal, and normalized pressure
+features so the score is not just a copy of Spark's rule output.
 
 ## Running it
 
@@ -115,62 +123,41 @@ The same topic can also be inspected from Kafka UI at http://localhost:8085. (ea
 
 ## Examples
 
-The following are real examples of structured events that you can expect to see in the Kafka UI.
-
 ### Failed event due to CPU thermal throttling:
 
 ```json
 {
-	"processing_component": "spark-structured-streaming",
-	"processed_at": "2026-05-19T12:40:53.297Z",
-	"otel_signal": "logs",
-	"event_dataset": "jenkins.build.console",
-	"ingestion_component": "logstash",
-	"source_topic": "cicd.otel.raw",
-	"source_partition": 0,
-	"source_offset": 57,
-	"source_kafka_timestamp": "2026-05-19T12:40:52.832Z",
-	"raw_event_sha256": "c0d7643348333f25d6576dc0263f3e54b97e2956b815a34c0144070a4d8b2a10",
-	"ci_event": "preflight",
-	"ci_stage": "preflight",
-	"ci_status": "failed",
-	"is_failure": true,
-	"failure_category": "infrastructure",
-	"failure_reason": "thermal_throttling",                       <---
-	"failure_detail": "agent_cpu_temperature_above_safe_limit",   <---
-	"risk_hint": 1.0,
-	"service_name": "demo-service",
-	"job_name": "demo-ci-observability",
-	"build_number": 4,
-	"raw_event": "{\"ingestion.component\":\"logstash\",\"@version\":\"1\",\"@timestamp\":\"2026-05-19T12:40:52.731330094Z\",\"message\":\"[2026-05-19T12:40:51.922Z] event=preflight stage=preflight status=failed service=demo-service job_name=demo-ci-observability build_number=4 reason=thermal_throttling detail=agent_cpu_temperature_above_safe_limit\",\"event.dataset\":\"jenkins.build.console\",\"host\":\"9e13401a41da\",\"ci.source\":\"jenkins-build-log\",\"otel.signal\":\"logs\",\"path\":\"/jenkins-home/jobs/demo-ci-observability/builds/4/log\"}"
+  "ci_stage": "preflight",
+  "ci_status": "failed",
+  "event_kind": "failure",
+  "signal_domain": "agent_health",
+  "signal_name": "cpu_temp_c",
+  "signal_value": 96,
+  "signal_unit": "celsius",
+  "severity_level": "critical",
+  "failure_category": "infrastructure",
+  "failure_reason": "thermal_throttling",
+  "feature_agent_pressure": 1.0,
+  "feature_overall_pressure": 1.0
 }
 ```
 
-### Pipeline 'build' stage completed (and how much time elapsed):
+### A near-failing build event stays successful but is already alert-ready:
 
 ```json
 {
-	"processing_component": "spark-structured-streaming",
-	"processed_at": "2026-05-19T12:40:56.273Z",
-	"otel_signal": "logs",
-	"event_dataset": "jenkins.build.console",
-	"ingestion_component": "logstash",
-	"source_topic": "cicd.otel.raw",
-	"source_partition": 0,
-	"source_offset": 71,
-	"source_kafka_timestamp": "2026-05-19T12:40:55.862Z",
-	"raw_event_sha256": "d96bd852431215c0b52b9b7e383bd949775c941c0ff2cb36aff10543cf5e255f",
-	"ci_event": "build",
-	"ci_stage": "build",      <---
-	"ci_status": "success",   <---
-	"is_failure": false,
-	"risk_hint": 0.15,
-	"service_name": "demo-service",
-	"service_module": "demo-service-api",
-	"dependency_cache": "hit",
-	"job_name": "demo-ci-observability",
-	"build_number": 3,
-	"compile_time_ms": 6550,    <---
-	"raw_event": "{\"ingestion.component\":\"logstash\",\"@version\":\"1\",\"@timestamp\":\"2026-05-19T12:40:55.762166945Z\",\"message\":\"[2026-05-19T12:40:55.280Z] event=build stage=build status=success service=demo-service job_name=demo-ci-observability build_number=3 module=demo-service-api compile_time_ms=6550 dependency_cache=hit\",\"event.dataset\":\"jenkins.build.console\",\"host\":\"9e13401a41da\",\"ci.source\":\"jenkins-build-log\",\"otel.signal\":\"logs\",\"path\":\"/jenkins-home/jobs/demo-ci-observability/builds/3/log\"}"
+  "ci_stage": "build",
+  "ci_status": "success",
+  "event_kind": "predictive_signal",
+  "signal_domain": "build",
+  "signal_name": "dependency_cache",
+  "signal_value": 1,
+  "signal_unit": "count",
+  "severity_level": "warning",
+  "alert_candidate": true,
+  "alert_type": "predictive_build_dependency_cache",
+  "alert_reason": "dependency_cache_near_limit",
+  "feature_build_pressure": 1.0,
+  "feature_overall_pressure": 1.0
 }
 ```

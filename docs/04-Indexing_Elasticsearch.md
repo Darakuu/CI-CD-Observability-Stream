@@ -33,14 +33,30 @@ The Python component in `elastic_indexer/` uses:
 - `Elasticsearch` from the official `elasticsearch` Python library
 - `elasticsearch.helpers.bulk` to index documents in batches
 
-Each document keeps the MLlib fields, the CI/CD event fields, and a few indexing fields:
+Each document keeps only the compact scored observability fields plus a few
+indexing fields:
 
 - `@timestamp` for Kibana time filtering
 - `indexed_at` for when Elasticsearch received the event
 - `indexer_source_topic`, `indexer_source_partition`, and `indexer_source_offset`
 - a deterministic document id based on `raw_event_sha256` when available
 
-The index template maps exact-match dashboard fields such as `job_name`, `ci_stage`, `pipeline_status`, `ml_risk_band`, and `ml_anomaly_class` as `keyword`. Numeric ML fields such as `ml_risk_score` are mapped as numbers, and timestamps are mapped as dates.
+The indexer drops unexpected fields before indexing, and the index template uses
+`dynamic: false` so old noisy fields do not become dashboard fields by accident.
+The mapped fields are meant for Kibana terms charts, time series, and alerts:
+
+- exact fields such as `job_name`, `ci_stage`, `signal_domain`, `signal_name`,
+  `severity_level`, `ml_risk_band`, `ml_anomaly_class`, `ml_alert_type`,
+  `ml_prediction_target`, `ml_score_basis`, `dashboard_category`, and
+  `notification_level`
+- numeric fields such as `ml_risk_score`, `ml_model_probability`,
+  `ml_feature_overall_pressure`, and `signal_value`
+- boolean fields such as `is_failure`, `alert_candidate`,
+  `ml_failure_prediction`, and `ml_predictive_alert`
+- readable text fields such as `event_summary`, `notification_title`, and
+  `notification_message`
+- timestamps such as `@timestamp`, `observed_at`, `ml_scored_at`, and
+  `indexed_at`
 
 ## Running it
 

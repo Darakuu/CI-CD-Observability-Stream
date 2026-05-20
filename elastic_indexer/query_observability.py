@@ -36,13 +36,19 @@ def risk_summary(client, index_name: str, minutes: int):
         },
         aggs={
             "risk_bands": {"terms": {"field": "ml_risk_band", "size": 10}},
+            "dashboard_categories": {"terms": {"field": "dashboard_category", "size": 10}},
+            "notification_levels": {"terms": {"field": "notification_level", "size": 10}},
             "anomaly_classes": {"terms": {"field": "ml_anomaly_class", "size": 10}},
+            "alert_types": {"terms": {"field": "ml_alert_type", "size": 10}},
+            "signal_domains": {"terms": {"field": "signal_domain", "size": 10}},
+            "severity_levels": {"terms": {"field": "severity_level", "size": 10}},
             "pipeline_statuses": {"terms": {"field": "pipeline_status", "size": 10}},
             "ci_stages": {"terms": {"field": "ci_stage", "size": 10}},
             "average_risk_score": {"avg": {"field": "ml_risk_score"}},
             "predictions": {
                 "filters": {
                     "filters": {
+                        "predictive_alert": {"term": {"ml_predictive_alert": True}},
                         "predicted_failure": {"term": {"ml_failure_prediction": True}},
                         "known_failure": {"term": {"is_failure": True}},
                     }
@@ -76,7 +82,21 @@ def recent_high_risk(client, index_name: str, minutes: int, size: int):
             "pipeline_status",
             "ml_risk_score",
             "ml_risk_band",
+            "ml_predictive_alert",
+            "ml_alert_type",
+            "ml_alert_reason",
+            "ml_recommended_action",
             "ml_anomaly_class",
+            "ml_prediction_target",
+            "ml_score_basis",
+            "dashboard_category",
+            "notification_level",
+            "notification_title",
+            "notification_message",
+            "signal_domain",
+            "signal_name",
+            "signal_value",
+            "severity_level",
             "failure_reason",
         ],
     )

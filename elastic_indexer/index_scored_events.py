@@ -26,6 +26,50 @@ DEFAULT_ELASTICSEARCH_INDEX = "cicd-observability-events"
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_FLUSH_INTERVAL_SECONDS = 5.0
 
+INDEXED_DOCUMENT_FIELDS = {
+    "processing_component",
+    "ml_scored_at",
+    "ml_model_name",
+    "ml_model_version",
+    "ml_risk_score",
+    "ml_risk_band",
+    "ml_failure_prediction",
+    "ml_predictive_alert",
+    "ml_alert_type",
+    "ml_alert_reason",
+    "ml_recommended_action",
+    "ml_anomaly_class",
+    "ml_prediction_target",
+    "ml_score_basis",
+    "dashboard_category",
+    "notification_level",
+    "notification_title",
+    "notification_message",
+    "ml_model_probability",
+    "ml_feature_overall_pressure",
+    "raw_event_sha256",
+    "observed_at",
+    "job_name",
+    "build_number",
+    "service_name",
+    "ci_stage",
+    "stage_order",
+    "ci_status",
+    "pipeline_status",
+    "event_kind",
+    "signal_domain",
+    "signal_name",
+    "signal_value",
+    "signal_unit",
+    "severity_level",
+    "event_summary",
+    "is_failure",
+    "alert_candidate",
+    "failure_category",
+    "failure_reason",
+    "target_environment",
+}
+
 
 @dataclass(frozen=True)
 class IndexerConfig:
@@ -92,6 +136,10 @@ def build_es_client(config: IndexerConfig) -> Elasticsearch:
     )
 
 
+def response_body(response) -> dict[str, Any]:
+    return response.body if hasattr(response, "body") else response
+
+
 def wait_for_elasticsearch(client: Elasticsearch, timeout_seconds: int = 120) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
@@ -112,95 +160,63 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
 
     keyword_fields = [
         "processing_component",
-        "spark_processing_component",
         "ml_model_name",
         "ml_model_version",
-        "ml_model_type",
         "ml_risk_band",
+        "ml_alert_type",
+        "ml_alert_reason",
+        "ml_recommended_action",
         "ml_anomaly_class",
-        "otel_signal",
-        "event_dataset",
-        "ingestion_component",
-        "source_topic",
+        "ml_prediction_target",
+        "ml_score_basis",
+        "dashboard_category",
+        "notification_level",
         "raw_event_sha256",
-        "ci_event",
+        "job_name",
+        "service_name",
         "ci_stage",
         "ci_status",
         "pipeline_status",
+        "event_kind",
+        "signal_domain",
+        "signal_name",
+        "signal_unit",
+        "severity_level",
         "failure_category",
         "failure_reason",
-        "error_code",
-        "service_name",
-        "service_module",
-        "build_tool",
-        "dependency_cache",
-        "job_name",
-        "source_branch",
         "target_environment",
-        "deployment_strategy",
-        "severity_text",
-        "trace_id",
-        "span_id",
-        "span_name",
-        "http_method",
-        "http_route",
-        "exception_type",
         "indexer_source_topic",
     ]
 
     integer_fields = [
-        "source_partition",
-        "ml_source_partition",
         "build_number",
-        "random_scenario",
-        "disk_free_pct",
-        "cpu_temp_c",
-        "compile_time_ms",
-        "test_total",
-        "passed_tests",
-        "failing_tests",
-        "test_duration_ms",
-        "artifact_size_mb",
-        "replicas_ready",
-        "replicas_expected",
-        "rollout_seconds",
-        "http_status_code",
+        "stage_order",
         "indexer_source_partition",
     ]
 
     long_fields = [
-        "source_offset",
-        "ml_source_offset",
         "indexer_source_offset",
     ]
 
     float_fields = [
         "ml_risk_score",
         "ml_model_probability",
-        "ml_feature_risk_hint",
-        "ml_feature_duration_signal",
-        "ml_feature_test_failure_ratio",
-        "ml_feature_low_disk_signal",
-        "ml_feature_heat_signal",
-        "ml_feature_deploy_gap_signal",
-        "ml_feature_http_error_signal",
-        "ml_feature_cache_miss_signal",
-        "risk_hint",
+        "ml_feature_overall_pressure",
+        "signal_value",
     ]
 
     boolean_fields = [
         "ml_failure_prediction",
+        "ml_predictive_alert",
         "is_failure",
-        "forced_success",
+        "alert_candidate",
     ]
 
     date_fields = [
         "@timestamp",
         "indexed_at",
         "ml_scored_at",
-        "processed_at",
-        "source_kafka_timestamp",
-        "ml_source_kafka_timestamp",
+        "observed_at",
         "indexer_source_kafka_timestamp",
     ]
 
@@ -222,15 +238,15 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
     )
     properties.update(
         {
-            "failure_detail": {
+            "event_summary": {
                 "type": "text",
                 "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
             },
-            "exception_message": {"type": "text"},
-            "artifact_name": {"type": "keyword", "ignore_above": 512},
-            "artifact_checksum": {"type": "keyword", "ignore_above": 512},
-            "test_suite": {"type": "keyword", "ignore_above": 512},
-            "raw_event": {"type": "text", "index": False},
+            "notification_title": {
+                "type": "text",
+                "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
+            },
+            "notification_message": {"type": "text"},
         }
     )
 
@@ -244,14 +260,29 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
                 "number_of_replicas": 0,
             },
             "mappings": {
-                "dynamic": True,
+                "dynamic": False,
                 "properties": properties,
             },
         },
     )
 
-    if not client.indices.exists(index=index_name):
+    if client.indices.exists(index=index_name):
+        # Templates only affect newly-created indices. Updating the live mapping
+        # lets newly-added fields appear in Kibana after refreshing the data view.
+        current_properties = existing_index_properties(client, index_name)
+        missing_properties = {
+            name: mapping for name, mapping in properties.items() if name not in current_properties
+        }
+        if missing_properties:
+            client.indices.put_mapping(index=index_name, properties=missing_properties)
+    else:
         client.indices.create(index=index_name)
+
+
+def existing_index_properties(client: Elasticsearch, index_name: str) -> dict[str, Any]:
+    mapping = response_body(client.indices.get_mapping(index=index_name))
+    index_mapping = mapping.get(index_name) or next(iter(mapping.values()), {})
+    return index_mapping.get("mappings", {}).get("properties", {})
 
 
 def build_consumer(config: IndexerConfig) -> KafkaConsumer:
@@ -278,8 +309,7 @@ def build_consumer(config: IndexerConfig) -> KafkaConsumer:
 def document_timestamp(document: dict[str, Any], kafka_timestamp_ms: int | None) -> str:
     return (
         document.get("ml_scored_at")
-        or document.get("processed_at")
-        or document.get("source_kafka_timestamp")
+        or document.get("observed_at")
         or kafka_timestamp_to_iso(kafka_timestamp_ms)
         or utc_now()
     )
@@ -303,6 +333,7 @@ def action_from_message(message, index_name: str) -> dict[str, Any] | None:
         print(f"Skipping Kafka message at offset {message.offset}: expected JSON object", flush=True)
         return None
 
+    document = {key: value for key, value in document.items() if key in INDEXED_DOCUMENT_FIELDS}
     document["@timestamp"] = document_timestamp(document, message.timestamp)
     document["indexed_at"] = utc_now()
     document["indexer_source_topic"] = message.topic
