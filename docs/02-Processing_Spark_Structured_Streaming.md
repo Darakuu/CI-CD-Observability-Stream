@@ -2,7 +2,7 @@
 
 This step adds the processing stage immediately after Kafka. It reads raw CI/CD telemetry events from `cicd.otel.raw`, keeps only result-level pipeline events, and writes cleaned observability events to `cicd.otel.processed`.
 
-The processed topic is the handoff point for the next stage: the Spark MLlib component consumes `cicd.otel.processed`, scores the CI/CD events, and writes the ML result to `cicd.otel.scored`.
+The processed topic is the handoff point for the next stage: the Spark MLlib component consumes `cicd.otel.processed`, predicts stage-failure warnings, and writes the ML result to `cicd.otel.scored`.
 
 ```mermaid
 flowchart TD
@@ -17,7 +17,7 @@ flowchart TD
     Spark -->|"offset and progress state"| Checkpoints
     Spark -->|"processed JSON events"| ProcessedKafka
     ProcessedKafka -->|"clean CI/CD events"| MLlib
-    MLlib -->|"risk-scored events"| ScoredKafka
+    MLlib -->|"warning events"| ScoredKafka
 ```
 
 ## What this stage uses
@@ -61,7 +61,6 @@ pipeline stages. For a build-stage event, the value is a JSON object like this:
   "event_summary": "stage_result build compile_time_ms normal",
   "is_failure": false,
   "alert_candidate": false,
-  "risk_hint": 0.15,
   "service_name": "demo-service",
   "service_module": "demo-service-api",
   "dependency_cache": "hit",
@@ -94,10 +93,9 @@ features:
 | `package` | `artifact` | `feature_artifact_pressure` from artifact size |
 | `deploy` | `deployment` | `feature_deploy_pressure` from rollout time and replica gap |
 
-The `risk_hint`, `severity_level`, and `alert_candidate` fields are Spark-side
-triage hints for humans and dashboards. The MLlib model does not use those
-fields as features; it predicts from stage, signal, and normalized pressure
-features so the score is not just a copy of Spark's rule output.
+The pressure fields are internal inputs for the MLlib stage. They are useful to
+train and run the model, but the final Kibana dashboard should focus on warning
+messages and observed failures rather than exposing those engineered features.
 
 ## Running it
 

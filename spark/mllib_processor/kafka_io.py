@@ -6,7 +6,7 @@ from mllib_processor.config import MllibConfig
 
 
 class KafkaScoredTelemetryStream:
-    """Reads processed telemetry and writes ML-scored telemetry."""
+    """Reads processed telemetry and writes ML warning telemetry."""
 
     def __init__(self, config: MllibConfig):
         self.config = config
@@ -24,7 +24,7 @@ class KafkaScoredTelemetryStream:
         )
 
     def write_scored_events(self, scored_events):
-        """Write ML-scored telemetry events to Kafka with checkpointing enabled."""
+        """Write ML warning events to Kafka with checkpointing enabled."""
 
         return (
             scored_events.writeStream.format("kafka")

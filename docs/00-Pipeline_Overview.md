@@ -13,7 +13,7 @@ flowchart TD
     RawKafka[("Kafka topic\ncicd.otel.raw")]
     Spark["Spark Structured Streaming"]
     ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
-    MLlib["Spark MLlib\nrisk scoring"]
+    MLlib["Spark MLlib\nfailure prediction"]
     ScoredKafka[("Kafka topic\ncicd.otel.scored")]
     Elasticsearch["Elasticsearch\ncicd-observability-events"]
     Kibana["Kibana\nCI/CD dashboard"]
@@ -25,7 +25,7 @@ flowchart TD
     RawKafka -->|"raw telemetry stream"| Spark
     Spark -->|"processed events"| ProcessedKafka
     ProcessedKafka -->|"clean CI/CD events"| MLlib
-    MLlib -->|"scored observability events"| ScoredKafka
+    MLlib -->|"stage warnings and observed failures"| ScoredKafka
     ScoredKafka -->|"bulk indexed documents"| Elasticsearch
     Elasticsearch -->|"data view and dashboard"| Kibana
 ```

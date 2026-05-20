@@ -458,7 +458,7 @@ class ProcessedEventProjector:
         )
 
     def _is_failure(self):
-        """Build the boolean expression that marks failed or risky CI/CD events."""
+        """Build the boolean expression that marks failed CI/CD events."""
 
         return (
             when(col("failure_reason").isNotNull(), lit(True))
@@ -609,7 +609,7 @@ class ProcessedEventProjector:
         )
 
     def _risk_hint(self):
-        """Assign a simple score that later ML and dashboards can treat as a hint."""
+        """Assign a small internal hint for downstream processing."""
 
         return (
             when(col("is_failure"), lit(1.0))

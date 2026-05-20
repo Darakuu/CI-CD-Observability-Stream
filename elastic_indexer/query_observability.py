@@ -21,8 +21,8 @@ def response_body(response) -> dict[str, Any]:
     return response.body if hasattr(response, "body") else response
 
 
-def risk_summary(client, index_name: str, minutes: int):
-    """Use aggregations for a compact live dashboard summary."""
+def warning_summary(client, index_name: str, minutes: int):
+    """Use aggregations for a compact live warning summary."""
 
     return client.search(
         index=index_name,
@@ -35,21 +35,18 @@ def risk_summary(client, index_name: str, minutes: int):
             }
         },
         aggs={
-            "risk_bands": {"terms": {"field": "ml_risk_band", "size": 10}},
             "dashboard_categories": {"terms": {"field": "dashboard_category", "size": 10}},
-            "notification_levels": {"terms": {"field": "notification_level", "size": 10}},
-            "anomaly_classes": {"terms": {"field": "ml_anomaly_class", "size": 10}},
-            "alert_types": {"terms": {"field": "ml_alert_type", "size": 10}},
+            "warning_levels": {"terms": {"field": "warning_level", "size": 10}},
+            "warning_types": {"terms": {"field": "warning_type", "size": 10}},
+            "warning_reasons": {"terms": {"field": "warning_reason", "size": 10}},
             "signal_domains": {"terms": {"field": "signal_domain", "size": 10}},
             "severity_levels": {"terms": {"field": "severity_level", "size": 10}},
             "pipeline_statuses": {"terms": {"field": "pipeline_status", "size": 10}},
             "ci_stages": {"terms": {"field": "ci_stage", "size": 10}},
-            "average_risk_score": {"avg": {"field": "ml_risk_score"}},
-            "predictions": {
+            "warnings": {
                 "filters": {
                     "filters": {
-                        "predictive_alert": {"term": {"ml_predictive_alert": True}},
-                        "predicted_failure": {"term": {"ml_failure_prediction": True}},
+                        "stage_failure_warning": {"term": {"ml_stage_failure_warning": True}},
                         "known_failure": {"term": {"is_failure": True}},
                     }
                 }
@@ -58,8 +55,8 @@ def risk_summary(client, index_name: str, minutes: int):
     )
 
 
-def recent_high_risk(client, index_name: str, minutes: int, size: int):
-    """Fetch a bounded list of high-risk events using exact filters."""
+def recent_warnings(client, index_name: str, minutes: int, size: int):
+    """Fetch a bounded list of warning and failure events using exact filters."""
 
     return client.search(
         index=index_name,
@@ -69,7 +66,7 @@ def recent_high_risk(client, index_name: str, minutes: int, size: int):
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": f"now-{minutes}m"}}},
-                    {"terms": {"ml_risk_band": ["high", "critical"]}},
+                    {"terms": {"dashboard_category": ["stage_failure_warning", "observed_failure"]}},
                 ]
             }
         },
@@ -80,19 +77,16 @@ def recent_high_risk(client, index_name: str, minutes: int, size: int):
             "ci_stage",
             "ci_status",
             "pipeline_status",
-            "ml_risk_score",
-            "ml_risk_band",
-            "ml_predictive_alert",
-            "ml_alert_type",
-            "ml_alert_reason",
-            "ml_recommended_action",
-            "ml_anomaly_class",
+            "ml_stage_failure_warning",
+            "predicted_failure_stage",
+            "warning_level",
+            "warning_type",
+            "warning_title",
+            "warning_message",
+            "warning_reason",
+            "recommended_action",
             "ml_prediction_target",
-            "ml_score_basis",
             "dashboard_category",
-            "notification_level",
-            "notification_title",
-            "notification_message",
             "signal_domain",
             "signal_name",
             "signal_value",
@@ -120,7 +114,7 @@ def main() -> None:
     parser.add_argument("--minutes", type=int, default=60)
     parser.add_argument("--size", type=int, default=20)
     parser.add_argument("--summary", action="store_true")
-    parser.add_argument("--high-risk", action="store_true")
+    parser.add_argument("--warnings", action="store_true")
     parser.add_argument("--job")
     parser.add_argument("--build", type=int)
     args = parser.parse_args()
@@ -128,12 +122,12 @@ def main() -> None:
     config = IndexerConfig.from_env()
     client = build_es_client(config)
 
-    if args.high_risk:
-        response = recent_high_risk(client, config.index_name, args.minutes, args.size)
+    if args.warnings:
+        response = recent_warnings(client, config.index_name, args.minutes, args.size)
     elif args.job:
         response = events_for_job(client, config.index_name, args.job, args.build, args.size)
     else:
-        response = risk_summary(client, config.index_name, args.minutes)
+        response = warning_summary(client, config.index_name, args.minutes)
 
     print(json.dumps(response_body(response), indent=2, default=str))
 

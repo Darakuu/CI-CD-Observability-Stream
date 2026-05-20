@@ -1,6 +1,8 @@
 # Indexing with Elasticsearch
 
-This step runs after the Spark MLlib scorer. It consumes ML-scored CI/CD events from Kafka and indexes them into Elasticsearch so Kibana can build the live CI/CD dashboard.
+This step runs after the Spark MLlib predictor. It consumes warning-oriented
+CI/CD events from Kafka and indexes them into Elasticsearch so Kibana can build
+the live dashboard.
 
 ```mermaid
 flowchart TD
@@ -9,7 +11,7 @@ flowchart TD
     Elasticsearch[("Elasticsearch\ncicd-observability-events")]
     Kibana["Kibana dashboard"]
 
-    ScoredKafka -->|"ML-scored JSON"| Indexer
+    ScoredKafka -->|"warning JSON"| Indexer
     Indexer -->|"Bulk API"| Elasticsearch
     Elasticsearch -->|"data view on @timestamp"| Kibana
 ```
@@ -30,43 +32,31 @@ The password is intentionally simple for the local demo. For a real deployment i
 The Python component in `elastic_indexer/` uses:
 
 - `KafkaConsumer` to read scored events from `cicd.otel.scored`
-- `Elasticsearch` from the official `elasticsearch` Python library
+- `Elasticsearch` from the official Python client
 - `elasticsearch.helpers.bulk` to index documents in batches
 
-Each document keeps only the compact scored observability fields plus a few
-indexing fields:
+Each document keeps only the fields needed by Kibana:
 
-- `@timestamp` for Kibana time filtering
-- `indexed_at` for when Elasticsearch received the event
-- `indexer_source_topic`, `indexer_source_partition`, and `indexer_source_offset`
-- a deterministic document id based on `raw_event_sha256` when available
+- warning fields: `ml_stage_failure_warning`, `warning_level`,
+  `warning_type`, `warning_title`, `warning_message`, `warning_reason`,
+  `recommended_action`
+- CI/CD fields: `job_name`, `build_number`, `ci_stage`, `ci_status`,
+  `pipeline_status`, `signal_domain`, `signal_name`, `signal_value`,
+  `failure_reason`
+- index fields: `@timestamp`, `indexed_at`, `indexer_source_topic`,
+  `indexer_source_partition`, and `indexer_source_offset`
 
-The indexer drops unexpected fields before indexing, and the index template uses
-`dynamic: false` so old noisy fields do not become dashboard fields by accident.
-The mapped fields are meant for Kibana terms charts, time series, and alerts:
+The index template uses `dynamic: false` so noisy or internal model fields do
+not become dashboard fields by accident.
 
-- exact fields such as `job_name`, `ci_stage`, `signal_domain`, `signal_name`,
-  `severity_level`, `ml_risk_band`, `ml_anomaly_class`, `ml_alert_type`,
-  `ml_prediction_target`, `ml_score_basis`, `dashboard_category`, and
-  `notification_level`
-- numeric fields such as `ml_risk_score`, `ml_model_probability`,
-  `ml_feature_overall_pressure`, and `signal_value`
-- boolean fields such as `is_failure`, `alert_candidate`,
-  `ml_failure_prediction`, and `ml_predictive_alert`
-- readable text fields such as `event_summary`, `notification_title`, and
-  `notification_message`
-- timestamps such as `@timestamp`, `observed_at`, `ml_scored_at`, and
-  `indexed_at`
-
-## Running it
+## Running It
 
 ```bash
 docker compose up -d --build
 ```
 
-Elasticsearch is exposed on http://localhost:9200 and the indexer starts as `elasticsearch-indexer`.
-Kibana is exposed on http://localhost:5601. Dashboards are created manually in
-the Kibana UI from the `cicd-observability-events` data view.
+Elasticsearch is exposed on http://localhost:9200 and the indexer starts as
+`elasticsearch-indexer`. Kibana is exposed on http://localhost:5601.
 
 Check the Elasticsearch containers with:
 
@@ -74,12 +64,18 @@ Check the Elasticsearch containers with:
 make es-logs
 ```
 
-## Checking the indexed data
+## Checking the Indexed Data
 
-The helper query script uses filters for exact matches, bounded result sizes, and aggregations for live summaries.
+The helper query script returns a compact warning summary:
 
 ```bash
 make es-summary
+```
+
+To list warning and failure documents directly:
+
+```bash
+make es-warnings
 ```
 
 To query Elasticsearch directly:
@@ -87,3 +83,7 @@ To query Elasticsearch directly:
 ```bash
 curl -u elastic:admine http://localhost:9200/cicd-observability-events/_count
 ```
+
+If old model-score fields are still visible in Kibana, delete the local demo
+index or run `make clean` before rebuilding. Kibana can remember old field
+metadata until the data view is refreshed.

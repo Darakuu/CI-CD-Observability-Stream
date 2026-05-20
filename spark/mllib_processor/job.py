@@ -54,7 +54,7 @@ class MllibScoringJob:
 
         return (
             parsed.filter(col("raw_event_sha256").isNotNull())
-            .withColumn("processing_component", lit("spark-mllib-risk-scoring"))
+            .withColumn("processing_component", lit("spark-mllib-stage-failure-prediction"))
         )
 
     def _project_for_kafka(self, scored_events):

@@ -1,130 +1,129 @@
-# Machine Learning with Spark MLlib
+# Stage Failure Prediction with Spark MLlib
 
-This step runs after the Spark Structured Streaming processor. It consumes the cleaned CI/CD events from `cicd.otel.processed`, applies a small Spark MLlib model, and writes scored observability events to `cicd.otel.scored`.
+This step runs after Spark Structured Streaming. It consumes cleaned CI/CD
+events from `cicd.otel.processed`, trains a small Spark MLlib Logistic
+Regression model at startup, and writes warning-oriented events to
+`cicd.otel.scored`.
 
 ```mermaid
 flowchart TD
     ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
-    MLlib["Spark MLlib\nspark-mllib"]
+    MLlib["Spark MLlib\nLogistic Regression"]
     Checkpoints[("Spark checkpoints\nspark-checkpoints/")]
     ScoredKafka[("Kafka topic\ncicd.otel.scored")]
     Elasticsearch["Elasticsearch"]
 
     ProcessedKafka -->|"processed CI/CD JSON"| MLlib
     MLlib -->|"offset and progress state"| Checkpoints
-    MLlib -->|"ML-scored JSON"| ScoredKafka
+    MLlib -->|"stage warnings"| ScoredKafka
     ScoredKafka -->|"index-ready documents"| Elasticsearch
 ```
 
-## What this stage uses
+## What This Stage Uses
 
 - Input topic: `cicd.otel.processed`
 - Output topic: `cicd.otel.scored`
 - Spark checkpoint path: `/tmp/spark-checkpoints/cicd-otel-scored`
-- Component name added by this stage: `spark-mllib-risk-scoring`
-- Model: `tap-ci-failure-risk-logistic-regression`, trained with Spark MLlib at startup from generated Jenkins build runs
+- Component name added by this stage: `spark-mllib-stage-failure-prediction`
+- Model: `tap-ci-stage-failure-logistic-regression`
 
-The input is the explicit processed-event schema produced by the previous Spark stage. The MLlib component does not read Jenkins logs, OpenTelemetry files, or the raw Kafka topic directly.
+The MLlib component does not read Jenkins logs, OpenTelemetry files, or the raw
+Kafka topic directly. It receives the normalized stage events produced by the
+previous Spark step.
 
-## What the model does
+## Model Training
 
-This demo starts from scratch, so the model does not depend on stored historical data. At startup, Spark generates a small baseline in code and trains a logistic regression model from rows that match the cleaned Spark observability schema.
+The model is trained as a normal supervised classifier:
 
-The model predicts whether a stage event belongs to a CI/CD risk pattern that
-usually ends in a failure or near-miss. It is not trying to say that a failed
-event has failed; known failures are already visible through `is_failure` and
-`failure_reason`.
+- `X`: independent variables built from stage, signal domain, signal name,
+  stage order, and normalized stage-pressure values.
+- `y`: the dependent target variable, `label`, which means the stage is in a
+  condition that should be treated as likely to fail soon.
 
-The generated baseline follows the same stage behavior as the demo Jenkins job: each build moves through checkout, preflight, build, test, package, and deploy, and failed stages stop the build. The generated runs cover the same failure cases emitted by Jenkins:
+The generated baseline is deterministic and large enough for a useful classroom
+demo: 1,500 synthetic builds, with one sample per Jenkins stage. The samples are
+based on the failure rules in `jenkins/jobs/seed.groovy`:
 
-- source checkout timeout
-- agent disk or temperature problems
-- dependency resolution failure
-- flaky test failure
-- artifact checksum mismatch
-- staging rollout timeout
-- pipeline-level success or failure
+- checkout latency and retry count
+- disk space and CPU temperature in pre-flight checks
+- build duration and dependency-cache misses
+- test duration and flaky-test pressure
+- package artifact size
+- deployment rollout duration and replica readiness
 
-For each processed event, the job builds a compact feature vector from fields already normalized by Spark Structured Streaming:
+Training uses Spark's standard split:
 
-- current CI/CD stage
-- signal domain and signal name
-- stage order
-- overall signal pressure
-- source-control, agent-health, build, test, artifact, and deployment pressures
+```python
+train_data, test_data = baseline.randomSplit([0.8, 0.2], seed=20260520)
+```
 
-The model intentionally does not use `is_failure`, `alert_candidate`,
-`risk_hint`, `severity_level`, `event_kind`, or `failure_category` as features.
-Those fields are useful for dashboards, but using them as model inputs would
-leak the answer into the prediction.
+The pipeline is fitted only on the 80% training split. The 20% test split is
+used to log AUC, accuracy, precision, and recall in the `spark-mllib` logs.
 
-This keeps the ML layer simple but still related to CI/CD observability rather
-than being a generic demo classifier.
+The model does not use `is_failure`, `failure_reason`, `alert_candidate`,
+`event_kind`, or dashboard fields as inputs. Those fields may still be used
+after prediction to decide whether an event is an observed failure or a warning,
+but they are not part of `X`.
 
-The code is intentionally kept small:
+## What MLlib Writes
 
-- `job.py` only coordinates Kafka, parsing, scoring, and the output topic.
-- `risk_model.py` owns the feature list, generated training rows, MLlib pipeline, risk bands, and dashboard fields.
-- `schemas.py` defines the processed input schema and the compact scored output shape.
-
-## What MLlib writes
-
-Each scored Kafka message is intentionally small. It keeps only the fields that
-Kibana needs for dashboards and alerts:
+The final output hides model internals from Kibana. It does not publish model
+probability, numeric scoring fields, bucket labels, or feature vectors. Kibana gets fields a
+human can read directly:
 
 ```json
 {
-  "processing_component": "spark-mllib-risk-scoring",
-  "ml_scored_at": "2026-05-19T00:00:00.000Z",
-  "ml_model_name": "tap-ci-failure-risk-logistic-regression",
-  "ml_model_version": "cicd-risk-logreg-v4",
-  "ml_risk_score": 0.93,
-  "ml_risk_band": "critical",
-  "ml_failure_prediction": true,
-  "ml_predictive_alert": false,
-  "ml_alert_type": "known_infrastructure",
-  "ml_alert_reason": "thermal_throttling",
-  "ml_recommended_action": "check_agent_disk_space_and_cpu_temperature",
-  "ml_anomaly_class": "known_infrastructure",
-  "ml_prediction_target": "failure_risk_from_stage_pressure",
-  "ml_score_basis": "model_probability_no_status_leakage",
-  "dashboard_category": "failure_event",
-  "notification_level": "critical",
-  "notification_title": "CI/CD failure demo-ci-observability #4 preflight",
-  "notification_message": "Risk critical for agent_health cpu_temp_c because thermal_throttling action check_agent_disk_space_and_cpu_temperature",
-  "ml_model_probability": 0.93,
-  "ml_feature_overall_pressure": 1.0,
-  "raw_event_sha256": "sha256-of-the-original-event",
-  "observed_at": "2026-05-19T00:00:00.000Z",
+  "processing_component": "spark-mllib-stage-failure-prediction",
+  "ml_scored_at": "2026-05-20T00:00:00.000Z",
+  "ml_model_name": "tap-ci-stage-failure-logistic-regression",
+  "ml_model_version": "cicd-stage-failure-logreg-v1",
+  "ml_stage_failure_warning": true,
+  "predicted_failure_stage": "preflight",
+  "warning_level": "warning",
+  "warning_type": "predicted_stage_failure",
+  "warning_title": "Stage may fail demo-ci-observability #42 preflight",
+  "warning_message": "The model predicts a possible failure in preflight from cpu_temp_c value 84 action check_agent_disk_space_and_cpu_temperature",
+  "warning_reason": "cpu_temp_c_near_limit",
+  "recommended_action": "check_agent_disk_space_and_cpu_temperature",
+  "dashboard_category": "stage_failure_warning",
   "job_name": "demo-ci-observability",
-  "build_number": 4,
+  "build_number": 42,
   "ci_stage": "preflight",
-  "stage_order": 2,
-  "ci_status": "failed",
-  "event_kind": "failure",
   "signal_domain": "agent_health",
   "signal_name": "cpu_temp_c",
-  "signal_value": 96,
+  "signal_value": 84,
   "signal_unit": "celsius",
-  "severity_level": "critical",
-  "failure_category": "infrastructure",
-  "failure_reason": "thermal_throttling"
+  "is_failure": false
 }
 ```
 
-The topic is the handoff point for Elasticsearch. The indexer consumes `cicd.otel.scored` and indexes one document per scored CI/CD event.
+Observed failures are still indexed, but they are not treated as predictions.
+Use this distinction in dashboards:
 
-## Running it
+```text
+ml_stage_failure_warning: true and is_failure: false
+```
+
+means the model is warning before a failure. This:
+
+```text
+is_failure: true
+```
+
+means Jenkins already emitted a failed stage.
+
+## Running It
 
 ```bash
 docker compose up -d --build
 ```
 
-The MLlib service starts as `spark-mllib` and waits on Kafka, topic initialization, and the structured-streaming processor.
+The MLlib service starts as `spark-mllib` and waits on Kafka, topic
+initialization, and the structured-streaming processor.
 
-## Checking the result
+## Checking the Result
 
-After Jenkins has generated telemetry, the scored topic can be checked with:
+After Jenkins has generated telemetry, inspect the scored topic:
 
 ```bash
 docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
@@ -133,4 +132,8 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --from-beginning
 ```
 
-The same stream can also be inspected from Kafka UI at http://localhost:8085.
+The startup metrics are visible with:
+
+```bash
+make ml-logs
+```

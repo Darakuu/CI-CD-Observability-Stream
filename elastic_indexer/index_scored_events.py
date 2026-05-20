@@ -1,4 +1,4 @@
-"""Index ML-scored CI/CD telemetry into Elasticsearch."""
+"""Index ML stage-warning telemetry into Elasticsearch."""
 
 from __future__ import annotations
 
@@ -31,22 +31,17 @@ INDEXED_DOCUMENT_FIELDS = {
     "ml_scored_at",
     "ml_model_name",
     "ml_model_version",
-    "ml_risk_score",
-    "ml_risk_band",
-    "ml_failure_prediction",
-    "ml_predictive_alert",
-    "ml_alert_type",
-    "ml_alert_reason",
-    "ml_recommended_action",
-    "ml_anomaly_class",
+    "ml_model_type",
     "ml_prediction_target",
-    "ml_score_basis",
+    "ml_stage_failure_warning",
+    "predicted_failure_stage",
+    "warning_level",
+    "warning_type",
+    "warning_title",
+    "warning_message",
+    "warning_reason",
+    "recommended_action",
     "dashboard_category",
-    "notification_level",
-    "notification_title",
-    "notification_message",
-    "ml_model_probability",
-    "ml_feature_overall_pressure",
     "raw_event_sha256",
     "observed_at",
     "job_name",
@@ -162,15 +157,14 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
         "processing_component",
         "ml_model_name",
         "ml_model_version",
-        "ml_risk_band",
-        "ml_alert_type",
-        "ml_alert_reason",
-        "ml_recommended_action",
-        "ml_anomaly_class",
+        "ml_model_type",
         "ml_prediction_target",
-        "ml_score_basis",
+        "predicted_failure_stage",
+        "warning_level",
+        "warning_type",
+        "warning_reason",
+        "recommended_action",
         "dashboard_category",
-        "notification_level",
         "raw_event_sha256",
         "job_name",
         "service_name",
@@ -199,15 +193,11 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
     ]
 
     float_fields = [
-        "ml_risk_score",
-        "ml_model_probability",
-        "ml_feature_overall_pressure",
         "signal_value",
     ]
 
     boolean_fields = [
-        "ml_failure_prediction",
-        "ml_predictive_alert",
+        "ml_stage_failure_warning",
         "is_failure",
         "alert_candidate",
     ]
@@ -242,11 +232,11 @@ def create_index_template(client: Elasticsearch, index_name: str) -> None:
                 "type": "text",
                 "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
             },
-            "notification_title": {
+            "warning_title": {
                 "type": "text",
                 "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
             },
-            "notification_message": {"type": "text"},
+            "warning_message": {"type": "text"},
         }
     )
 
