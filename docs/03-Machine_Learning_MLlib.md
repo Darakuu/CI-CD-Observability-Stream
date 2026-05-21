@@ -7,16 +7,30 @@ Regression model at startup, and writes warning-oriented events to
 
 ```mermaid
 flowchart TD
-    ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
+    ProcessedKafka[("Kafka Topic\ncicd.otel.processed")]
     MLlib["Spark MLlib\nLogistic Regression"]
-    Checkpoints[("Spark checkpoints\nspark-checkpoints/")]
-    ScoredKafka[("Kafka topic\ncicd.otel.scored")]
-    Elasticsearch["Elasticsearch"]
+    Checkpoints[("Spark Checkpoints\nML offsets")]
+    ScoredKafka[("Kafka Topic\ncicd.otel.scored")]
+    Indexer["Elasticsearch Indexer"]
+    Elasticsearch[("Elasticsearch\ncicd-observability-events")]
 
-    ProcessedKafka -->|"processed CI/CD JSON"| MLlib
-    MLlib -->|"offset and progress state"| Checkpoints
-    MLlib -->|"stage warnings"| ScoredKafka
-    ScoredKafka -->|"index-ready documents"| Elasticsearch
+    ProcessedKafka -->|"processed"| MLlib
+    MLlib -->|"offsets"| Checkpoints
+    MLlib -->|"scored"| ScoredKafka
+    ScoredKafka -->|"consume"| Indexer
+    Indexer -->|"bulk"| Elasticsearch
+
+    classDef kafka fill:#F4F4F5,stroke:#231F20,stroke-width:2px,color:#1F2937;
+    classDef mllib fill:#FEF3C7,stroke:#B45309,stroke-width:2px,color:#1F2937;
+    classDef checkpoint fill:#F8FAFC,stroke:#64748B,stroke-width:2px,color:#1F2937;
+    classDef indexer fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#1F2937;
+    classDef elasticsearch fill:#E6FFFB,stroke:#00BFB3,stroke-width:2px,color:#1F2937;
+
+    class ProcessedKafka,ScoredKafka kafka;
+    class MLlib mllib;
+    class Checkpoints checkpoint;
+    class Indexer indexer;
+    class Elasticsearch elasticsearch;
 ```
 
 ## What This Stage Uses

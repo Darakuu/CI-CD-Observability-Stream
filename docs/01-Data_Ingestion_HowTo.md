@@ -5,31 +5,35 @@ First part of our pipeline (in detail):
 ```mermaid
 flowchart LR
     subgraph CI["CI/CD Source"]
-        A["🚀 Jenkins Pipeline Demo"]
+        A["Jenkins Pipeline Demo"]
     end
 
     subgraph OBS["Observability Layer"]
-        B["📡 OpenTelemetry Collector"]
-        C["📥 Logstash Ingestion"]
+        B["OpenTelemetry Collector"]
+        C[("JSONL Files")]
+        D["Logstash Ingestion"]
     end
 
     subgraph STREAM["Streaming Layer"]
-        D[("🟣 Kafka Topic<br/>cicd.otel.raw")]
+        E[("Kafka Topic<br/>cicd.otel.raw")]
     end
 
-    A -->|"OTLP/gRPC<br/>traces · metrics · logs"| B
-    B -->|"OTLP JSON Lines<br/>shared volume"| C
-    C -->|"JSON events"| D
+    A -->|"OTLP"| B
+    B -->|"JSONL"| C
+    C -->|"tail"| D
+    D -->|"events"| E
 
-    classDef source fill:#FFF7D6,stroke:#D97706,stroke-width:2px,color:#1F2937;
-    classDef observability fill:#DBEAFE,stroke:#2563EB,stroke-width:2px,color:#1F2937;
-    classDef ingestion fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#1F2937;
-    classDef stream fill:#F3E8FF,stroke:#7C3AED,stroke-width:2px,color:#1F2937;
+    classDef jenkins fill:#FDE8E8,stroke:#D33833,stroke-width:2px,color:#1F2937;
+    classDef otel fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#1F2937;
+    classDef file fill:#F8FAFC,stroke:#64748B,stroke-width:2px,color:#1F2937;
+    classDef logstash fill:#ECFDF5,stroke:#54B399,stroke-width:2px,color:#1F2937;
+    classDef kafka fill:#F4F4F5,stroke:#231F20,stroke-width:2px,color:#1F2937;
 
-    class A source;
-    class B observability;
-    class C ingestion;
-    class D stream;
+    class A jenkins;
+    class B otel;
+    class C file;
+    class D logstash;
+    class E kafka;
 ```
 
 ## Pre-requisites

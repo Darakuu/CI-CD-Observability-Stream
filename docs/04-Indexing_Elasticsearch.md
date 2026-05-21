@@ -6,14 +6,24 @@ the live dashboard.
 
 ```mermaid
 flowchart TD
-    ScoredKafka[("Kafka topic\ncicd.otel.scored")]
-    Indexer["Python indexer\nelasticsearch-indexer"]
+    ScoredKafka[("Kafka Topic\ncicd.otel.scored")]
+    Indexer["Elasticsearch Indexer\nPython consumer"]
     Elasticsearch[("Elasticsearch\ncicd-observability-events")]
-    Kibana["Kibana dashboard"]
+    Kibana["Kibana Dashboard"]
 
-    ScoredKafka -->|"warning JSON"| Indexer
-    Indexer -->|"Bulk API"| Elasticsearch
-    Elasticsearch -->|"data view on @timestamp"| Kibana
+    ScoredKafka -->|"scored"| Indexer
+    Indexer -->|"bulk"| Elasticsearch
+    Elasticsearch -->|"query"| Kibana
+
+    classDef kafka fill:#F4F4F5,stroke:#231F20,stroke-width:2px,color:#1F2937;
+    classDef indexer fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#1F2937;
+    classDef elasticsearch fill:#E6FFFB,stroke:#00BFB3,stroke-width:2px,color:#1F2937;
+    classDef kibana fill:#FDF2F8,stroke:#D36086,stroke-width:2px,color:#1F2937;
+
+    class ScoredKafka kafka;
+    class Indexer indexer;
+    class Elasticsearch elasticsearch;
+    class Kibana kibana;
 ```
 
 ## What this stage uses

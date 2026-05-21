@@ -6,18 +6,28 @@ The processed topic is the handoff point for the next stage: the Spark MLlib com
 
 ```mermaid
 flowchart TD
-    RawKafka[("Kafka topic\ncicd.otel.raw")]
+    RawKafka[("Kafka Topic\ncicd.otel.raw")]
     Spark["Spark Structured Streaming\nspark-processor"]
-    Checkpoints[("Spark checkpoints\nspark-checkpoints/")]
-    ProcessedKafka[("Kafka topic\ncicd.otel.processed")]
+    Checkpoints[("Spark Checkpoints\nprocessed offsets")]
+    ProcessedKafka[("Kafka Topic\ncicd.otel.processed")]
     MLlib["Spark MLlib\nspark-mllib"]
-    ScoredKafka[("Kafka topic\ncicd.otel.scored")]
+    ScoredKafka[("Kafka Topic\ncicd.otel.scored")]
 
-    RawKafka -->|"raw JSON events"| Spark
-    Spark -->|"offset and progress state"| Checkpoints
-    Spark -->|"processed JSON events"| ProcessedKafka
-    ProcessedKafka -->|"clean CI/CD events"| MLlib
-    MLlib -->|"warning events"| ScoredKafka
+    RawKafka -->|"raw"| Spark
+    Spark -->|"offsets"| Checkpoints
+    Spark -->|"processed"| ProcessedKafka
+    ProcessedKafka -->|"events"| MLlib
+    MLlib -->|"scored"| ScoredKafka
+
+    classDef kafka fill:#F4F4F5,stroke:#231F20,stroke-width:2px,color:#1F2937;
+    classDef spark fill:#FFF1E8,stroke:#E25A1C,stroke-width:2px,color:#1F2937;
+    classDef checkpoint fill:#F8FAFC,stroke:#64748B,stroke-width:2px,color:#1F2937;
+    classDef mllib fill:#FEF3C7,stroke:#B45309,stroke-width:2px,color:#1F2937;
+
+    class RawKafka,ProcessedKafka,ScoredKafka kafka;
+    class Spark spark;
+    class Checkpoints checkpoint;
+    class MLlib mllib;
 ```
 
 ## What this stage uses
