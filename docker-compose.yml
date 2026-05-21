@@ -117,7 +117,7 @@ services:
     command:
       - /opt/spark/bin/spark-submit
       - --packages
-      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8
       - --conf
       - spark.jars.ivy=/tmp/.ivy2
       - /opt/tap/spark/process_stream.py
@@ -143,7 +143,7 @@ services:
     command:
       - /opt/spark/bin/spark-submit
       - --packages
-      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8
       - --conf
       - spark.jars.ivy=/tmp/.ivy2
       - /opt/tap/spark/score_stream.py
@@ -183,6 +183,7 @@ services:
         condition: service_started
       elasticsearch:
         condition: service_healthy
+    restart: unless-stopped
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - ELASTICSEARCH_INPUT_TOPIC=cicd.otel.scored

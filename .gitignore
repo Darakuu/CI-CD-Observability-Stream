@@ -19,6 +19,7 @@ dist/
 
 # Virtual environments
 .venv
+.uv-cache/
 env/
 venv/
 
@@ -42,6 +43,7 @@ kafka-data/
 otel-output/
 logstash-data/
 spark-checkpoints/
+spark-local/
 
 ### Ruby
 # Build artifacts
