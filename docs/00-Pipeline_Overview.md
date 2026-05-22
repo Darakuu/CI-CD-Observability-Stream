@@ -13,7 +13,7 @@ A **Jenkins demo job** simulates a CI/CD pipeline executing, which then emits te
 The **Elasticsearch** indexer consumes those scored events, adds indexing metadata such as `@timestamp` and the Kafka source offset, writes them to the `cicd-observability-events` index, and finally we can use **Kibana** to visualize the indexed CI/CD warnings and failures in the final dashboard.
 **Kibana** implements a Data view and a dashboard made in its UI, with no further work required by the user.
 
-## Data Ingestion
+## Diagram overview
 
 ```mermaid
 flowchart TD

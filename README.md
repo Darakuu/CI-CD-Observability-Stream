@@ -94,7 +94,12 @@ Default local Jenkins login:
 admin / admin
 ```
 
-Some useful commands:
+Defaul Elastic login:
+```text
+elastic / admine
+```
+
+Some other useful commands:
 
 ```bash
 # Show the Kafka topics
@@ -137,6 +142,7 @@ See all definitions in the Makefile.
 project/
 |-- docker-compose.yml          # Local multi-container stack
 |-- Makefile                    # Helper commands
+|-- assets/                     # Images needed for this README or the presentation.
 |-- docs/                       # Demo documentation per step
 |-- jenkins/                    # Jenkins image, plugins, JCasC and demo job
 |-- otel-collector/             # OpenTelemetry Collector configuration
@@ -146,4 +152,71 @@ project/
 |-- kibana/                     # Exported Kibana dashboard
 |-- scripts/                    # Small topic consumer helpers (for debug purposes)
 |-- README.md                   # This file!
+```
+
+## Mermaid Diagram of the Pipeline
+
+
+```mermaid
+flowchart TD
+    subgraph CI["CI/CD Source"]
+        Jenkins["Jenkins Pipeline"]
+    end
+
+    subgraph Collect["Telemetry Collection"]
+        OTel["OpenTelemetry Collector"]
+        Files[("JSONL Files")]
+        Logstash["Logstash"]
+    end
+
+    subgraph Stream["Apache Kafka"]
+        RawKafka[("cicd.otel.raw")]
+        ProcessedKafka[("cicd.otel.processed")]
+        ScoredKafka[("cicd.otel.scored")]
+    end
+
+    subgraph Process["Spark Processing"]
+        Spark["Spark Structured Streaming"]
+        MLlib["Spark MLlib"]
+    end
+
+    subgraph Search["Search and Visualization"]
+        Indexer["Elasticsearch Indexer"]
+        Elasticsearch[("cicd-observability-events")]
+        Kibana["Kibana Dashboard"]
+    end
+
+    Jenkins -->|"OTLP"| OTel
+    OTel -->|"JSONL"| Files
+    Files -->|"tail"| Logstash
+    Logstash -->|"events"| RawKafka
+    RawKafka -->|"raw"| Spark
+    Spark -->|"processed"| ProcessedKafka
+    ProcessedKafka -->|"features"| MLlib
+    MLlib -->|"scored"| ScoredKafka
+    ScoredKafka -->|"consume"| Indexer
+    Indexer -->|"bulk"| Elasticsearch
+    Elasticsearch -->|"query"| Kibana
+
+    classDef jenkins fill:#FDE8E8,stroke:#D33833,stroke-width:2px,color:#1F2937;
+    classDef otel fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#1F2937;
+    classDef file fill:#F8FAFC,stroke:#64748B,stroke-width:2px,color:#1F2937;
+    classDef logstash fill:#ECFDF5,stroke:#54B399,stroke-width:2px,color:#1F2937;
+    classDef kafka fill:#F4F4F5,stroke:#231F20,stroke-width:2px,color:#1F2937;
+    classDef spark fill:#FFF1E8,stroke:#E25A1C,stroke-width:2px,color:#1F2937;
+    classDef mllib fill:#FEF3C7,stroke:#B45309,stroke-width:2px,color:#1F2937;
+    classDef indexer fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#1F2937;
+    classDef elasticsearch fill:#E6FFFB,stroke:#00BFB3,stroke-width:2px,color:#1F2937;
+    classDef kibana fill:#FDF2F8,stroke:#D36086,stroke-width:2px,color:#1F2937;
+
+    class Jenkins jenkins;
+    class OTel otel;
+    class Files file;
+    class Logstash logstash;
+    class RawKafka,ProcessedKafka,ScoredKafka kafka;
+    class Spark spark;
+    class MLlib mllib;
+    class Indexer indexer;
+    class Elasticsearch elasticsearch;
+    class Kibana kibana;
 ```
