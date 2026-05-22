@@ -34,6 +34,9 @@ For running the full stack locally, the requirements are:
 
 On Windows, Docker Desktop should be running before starting the stack.
 
+For the optional local Python environment, install `uv`. This is useful for
+local checks and for opening the presentation notebook.
+
 # Installation
 
 
@@ -47,6 +50,17 @@ docker compose up -d --build
 
 The first start can take some time because Spark and the other services need to
 download their images and dependencies.
+
+To recreate the local Python environment declared by `pyproject.toml` and
+`uv.lock`, run:
+
+```bash
+uv sync
+```
+
+The `dev` dependency group includes the Jupyter kernel support used by
+`presentazione.ipynb`. The Docker services do not depend on that local
+environment.
 
 # Usage
 
